@@ -63,6 +63,17 @@
   #brake{ width:76px; height:90px; background:var(--red); font-size:13px; }
   #gas{ width:92px; height:100px; background:var(--green); font-size:15px; }
 
+  /* ручне керування (механіка) */
+  #manualCtl{ position:absolute; left:0; right:0; bottom:120px; z-index:11; display:flex; justify-content:center; gap:8px; pointer-events:none; }
+  #manualCtl.hidden{ display:none; }
+  .mbtn{ pointer-events:auto; touch-action:none; border:none; color:#fff; font-weight:800; border-radius:14px;
+         background:rgba(20,22,26,.86); box-shadow:0 3px 10px rgba(0,0,0,.32); display:flex; align-items:center; justify-content:center; }
+  .mbtn:active{ transform:scale(.92); filter:brightness(1.15); }
+  #clutchBtn{ width:150px; height:50px; font-size:15px; background:#7a5cd0; }
+  #clutchBtn.pressed{ background:#5a3fb0; }
+  .mbtn.sm{ width:54px; height:50px; font-size:24px; }
+  .chip.stall{ background:#d93a34 !important; }
+
   /* оверлеї / панелі */
   .overlay{ position:absolute; inset:0; z-index:30; display:flex; align-items:center; justify-content:center;
             background:rgba(8,10,13,.72); backdrop-filter:blur(3px); padding:22px; }
@@ -74,6 +85,7 @@
   .cta{ margin-top:10px; background:var(--accent); color:#3a2a05; border:none; border-radius:14px; padding:14px 20px;
         font-size:17px; font-weight:800; width:100%; cursor:pointer; }
   .cta.sec{ background:#eceef1; color:var(--ink); }
+  .cta.sec.on{ background:var(--accent); color:#3a2a05; }
   .cta:active{ transform:scale(.97); }
   .row{ display:flex; gap:8px; margin-top:8px; }
   .row .cta{ margin-top:0; }
@@ -126,6 +138,7 @@
   <div class="chip">💵 <span id="money">3000</span> <small>грн</small></div>
   <div class="chip">⛽ <span class="gauge"><i id="fuelBar"></i></span> <span id="range">—</span><small>км</small></div>
   <div class="chip">🚗 <span id="speed">0</span><small>км/год</small></div>
+  <div class="chip hidden" id="gearChip">⚙️ <b id="gearVal">N</b> <span class="gauge"><i id="rpmBar" style="background:#2b7fd4"></i></span></div>
   <div class="chip" id="street"><span>—</span></div>
 </div>
 
@@ -137,6 +150,12 @@
 </div>
 
 <button id="ctx"></button>
+
+<div id="manualCtl" class="hidden">
+  <button class="mbtn sm" id="gearDown">▼</button>
+  <button class="mbtn" id="clutchBtn">🦵 Зчеплення</button>
+  <button class="mbtn sm" id="gearUp">▲</button>
+</div>
 
 <div id="controls">
   <div class="cluster">
@@ -169,7 +188,12 @@
       <b>📦</b> — взяти замовлення (везеш з А в Б за гроші).<br>
       Під'їдь до <b>⛽ АЗС</b> — заправка, до <b>⛪ храму</b> — бонус.
     </div>
-    <button class="cta" id="startBtn">Поїхали! 🚦</button>
+    <div class="row" style="margin-top:6px;">
+      <button class="cta sec on" id="modeAuto">🅰️ Автомат</button>
+      <button class="cta sec" id="modeManual">🔧 Механіка</button>
+    </div>
+    <div style="font-size:11px;color:#999;margin-top:5px;">Механіка: зчеплення, передачі, двигун глохне — для двох рук.</div>
+    <button class="cta" id="startBtn" style="margin-top:10px;">Поїхали! 🚦</button>
     <div id="loadNote" style="font-size:12px;color:#999;margin-top:8px;">Завантаження карти Оболоні…</div>
   </div>
 </div>
@@ -207,6 +231,55 @@ const BRAND_PRICE = { WOG:78.9, ОККО:78.9, SOCAR:77.9, KLO:72.9, "КЛО":72
   "Народна":71.0, Parallel:73.0 };
 const LPG_PRICE = 40.0;
 
+// ===== КПП (реалістична модель, спец) =====
+const GEARS_M = { '-1':-13.53, '0':0, '1':14.15, '2':7.95, '3':5.54, '4':4.22, '5':3.36 };
+const ENG = { idle:800, redline:6000, fuelcut:6500, stall:450, stallGrace:0.35,
+  revUp:9, revDown:6, mass:1200, KFAC:8.77, forceK:300, dragA:0.32, roll:60, brakeN:6500 };
+function torqueCurve(rpm){ const p=[[800,0.5],[2000,0.78],[3500,1.0],[4500,0.97],[6000,0.6],[6500,0]];
+  if(rpm<=p[0][0]) return p[0][1];
+  for(let i=0;i<p.length-1;i++){ if(rpm<=p[i+1][0]){ const [x0,y0]=p[i],[x1,y1]=p[i+1];
+    return y0+(y1-y0)*(rpm-x0)/(x1-x0); } } return 0; }
+function updateDrivetrain(dt){
+  const running = car.engineRunning && fuel>0;
+  const throttle = (input.gas && running)?1:0;
+  if(car.mode!=='manual'){
+    // АВТОМАТ — аркадна модель, без глохнення
+    if(running){ if(input.gas) car.speed+=CFG.accel*dt; else if(input.brake) car.speed-=CFG.brake*dt; else car.speed-=CFG.friction*dt; }
+    else { if(input.brake) car.speed-=CFG.brake*dt; else car.speed-=CFG.friction*dt; }
+    car.speed=Math.max(0,Math.min(CFG.maxSpeed,car.speed)); car.gearDisp='D'; return;
+  }
+  // МЕХАНІКА
+  const comb=GEARS_M[String(car.gear)]||0;
+  const engaged = car.engineRunning ? (car.gear!==0 ? (1-car.clutch) : 0) : 0;
+  const freeTarget = ENG.idle + throttle*(ENG.redline-ENG.idle);
+  const wheelRPM = Math.abs(car.speed)*Math.abs(comb)*ENG.KFAC;
+  const rpmTarget = freeTarget*(1-engaged) + wheelRPM*engaged;
+  car.rpm += (rpmTarget-car.rpm)*(rpmTarget>car.rpm?ENG.revUp:ENG.revDown)*dt;
+  car.rpm = Math.max(0, Math.min(ENG.fuelcut, car.rpm));
+  if(!car.engineRunning) car.rpm=0;
+  let engineForce=0;
+  if(car.engineRunning && engaged>0 && car.gear!==0 && fuel>0)
+    engineForce = torqueCurve(car.rpm)*throttle*Math.abs(comb)*ENG.forceK*engaged*Math.sign(comb);
+  const brakeForce=(input.brake?1:0)*ENG.brakeN;
+  const drag=ENG.dragA*car.speed*Math.abs(car.speed)+ENG.roll*Math.sign(car.speed);
+  const accel=(engineForce - brakeForce*Math.sign(car.speed) - drag)/ENG.mass;
+  car.speed += accel*dt*3.6;
+  const minS = car.gear===-1? -CFG.maxSpeed*0.4 : 0;
+  car.speed = Math.max(minS, Math.min(CFG.maxSpeed, car.speed));
+  if(car.engineRunning && engaged>0.5 && car.rpm<ENG.stall){ car.stallT=(car.stallT||0)+dt;
+    if(car.stallT>ENG.stallGrace){ car.engineRunning=false; car.rpm=0; car.speed*=0.6; toast('💥 Двигун заглух! Вижми зчеплення і заведи (🔑).'); } }
+  else car.stallT=0;
+  car.gearDisp = car.gear===-1?'R':(car.gear===0?'N':String(car.gear));
+}
+function shiftGear(delta){
+  if(car.mode!=='manual') return;
+  if(car.clutch<0.7){ toast('Вижми зчеплення, щоб перемкнути передачу'); return; }
+  car.gear=Math.max(-1,Math.min(5, car.gear+delta));
+  toast('Передача: '+(car.gear===-1?'R':car.gear===0?'N':car.gear));
+}
+function startEngine(){ if(!car.engineRunning){ if(car.mode==='manual' && car.clutch<0.7 && car.gear!==0){ toast('Вижми зчеплення, щоб завести'); return; }
+  car.engineRunning=true; car.rpm=ENG.idle; toast('🔑 Двигун заведено'); } }
+
 // Орієнтири для замовлень (реальні місця Оболоні)
 const LANDMARKS = [
   { name:"Метро «Оболонь»", lat:50.50130, lng:30.49830 },
@@ -240,7 +313,8 @@ let fuel=CFG.startFuel, money=CFG.startMoney, fuelType='A95';
 let churchCd=0, blessing=0;
 let job=null; // {from,to,stage:'pickup'|'deliver',fromMk,toMk,dist}
 let jobMarker=null;
-const input={ left:false, right:false, gas:false, brake:false };
+const input={ left:false, right:false, gas:false, brake:false, clutch:false };
+let selectedMode='auto';
 let segments=[], grid=new Map(), GRID=60;
 let fuelMarks=[], churchMarks=[], stations=[];
 let lastT=0;
@@ -331,22 +405,33 @@ function toast(msg){ const b=document.getElementById('bannerMsg'); b.textContent
   clearTimeout(bannerT); bannerT=setTimeout(()=>b.classList.remove('show'),3400); }
 function updateHUD(){
   document.getElementById('money').textContent=Math.round(money);
-  document.getElementById('speed').textContent=Math.round(car.speed);
+  document.getElementById('speed').textContent=Math.round(Math.abs(car.speed));
   const pct=Math.max(0,Math.min(1,fuel/CFG.tank));
   const bar=document.getElementById('fuelBar'); bar.style.width=(pct*100)+'%';
   bar.style.background = pct<0.15?'#d93a34':(pct<0.3?'#e8a33a':'#2eb35c');
   document.getElementById('range').textContent=Math.round(rangeKm());
+  if(car.mode==='manual'){
+    document.getElementById('gearVal').textContent=car.gearDisp||'N';
+    const rp=Math.max(0,Math.min(1,(car.rpm||0)/ENG.redline));
+    const rb=document.getElementById('rpmBar'); rb.style.width=(rp*100)+'%';
+    rb.style.background=(car.rpm>ENG.redline)?'#d93a34':(car.rpm>ENG.redline*0.85?'#e8a33a':'#2b7fd4');
+    document.getElementById('gearChip').classList.toggle('stall', !car.engineRunning);
+  }
 }
 
 // контекстна кнопка (АЗС / церква)
 let ctxAction=null;
 function updateCtx(lat,lng){
   const btn=document.getElementById('ctx');
+  // заглухлий двигун (механіка) — завести
+  if(car.mode==='manual' && !car.engineRunning && Math.abs(car.speed)<8){
+    btn.textContent='🔑 Завести двигун'; ctxAction=startEngine; btn.style.display='block'; return;
+  }
   // АЗС
   let near=null;
   for(const s of stations){ if(dist(lat,lng,s.lat,s.lng)<CFG.arrive){ near={type:'fuel',s}; break; } }
   if(!near) for(const c of churchMarks){ if(dist(lat,lng,c.lat,c.lng)<CFG.arrive){ near={type:'church',c}; break; } }
-  if(near && car.speed<8){
+  if(near && Math.abs(car.speed)<8){
     if(near.type==='fuel'){ btn.textContent='⛽ Заправитись'; ctxAction=()=>openFuel(near.s); }
     else{ const ready=churchCd<=0; btn.textContent=ready?'⛪ Зайти до храму':'⛪ Вже сьогодні'; ctxAction=ready?visitChurch:null; }
     btn.style.display='block';
@@ -387,15 +472,10 @@ function tick(now){
 function step(dt){
   if(input.left)  car.heading-=CFG.turn*dt;
   if(input.right) car.heading+=CFG.turn*dt;
-  if(fuel>0 && car.engineRunning){
-    if(input.gas) car.speed+=CFG.accel*dt;
-    else if(input.brake) car.speed-=CFG.brake*dt;
-    else car.speed-=CFG.friction*dt;
-  } else {
-    if(input.brake) car.speed-=CFG.brake*dt; else car.speed-=CFG.friction*dt;
-    if(fuel<=0) toastLowFuelMaybe();
-  }
-  car.speed=Math.max(0,Math.min(CFG.maxSpeed,car.speed));
+  // зчеплення (плавно) + трансмісія (авто/механіка)
+  if(car.mode==='manual'){ const tgt=input.clutch?1:0; car.clutch+=(tgt-car.clutch)*(input.clutch?14:4)*dt; car.clutch=Math.max(0,Math.min(1,car.clutch)); }
+  updateDrivetrain(dt);
+  if(fuel<=0) toastLowFuelMaybe();
 
   const mps=car.speed/3.6, distM=mps*dt;
   car.x+=distM*Math.sin(car.heading); car.y+=distM*Math.cos(car.heading);
@@ -416,7 +496,7 @@ function step(dt){
   } else streetName('вільний режим');
 
   // паливо / бонуси / кулдауни
-  if(car.speed>0.5) useFuel(distM); else if(input.gas) fuel=Math.max(0,fuel-CFG.idleLh/3600*dt);
+  if(Math.abs(car.speed)>0.5) useFuel(Math.abs(distM)); else if(car.engineRunning) fuel=Math.max(0,fuel-CFG.idleLh/3600*dt);
   if(churchCd>0) churchCd-=dt;
   if(blessing>0) blessing-=distM/1000/10; // тане за 10 км
 
@@ -439,8 +519,20 @@ function bind(id,key){ const b=document.getElementById(id);
   const off=e=>{ e.preventDefault(); input[key]=false; };
   b.addEventListener('pointerup',off); b.addEventListener('pointercancel',off); }
 bind('left','left'); bind('right','right'); bind('gas','gas'); bind('brake','brake');
-const km={ArrowLeft:'left',ArrowRight:'right',ArrowUp:'gas',ArrowDown:'brake',a:'left',d:'right',w:'gas',s:'brake',ф:'left',в:'right',ц:'gas',і:'brake'};
-addEventListener('keydown',e=>{ const k=km[e.key]; if(k){ e.preventDefault(); input[k]=true; }});
+// механіка: зчеплення (утримання) + передачі + вибір режиму
+(function(){ const cb=document.getElementById('clutchBtn');
+  cb.addEventListener('pointerdown',e=>{ e.preventDefault(); try{cb.setPointerCapture(e.pointerId);}catch(_){ } input.clutch=true; cb.classList.add('pressed'); });
+  const off=e=>{ e.preventDefault(); input.clutch=false; cb.classList.remove('pressed'); };
+  cb.addEventListener('pointerup',off); cb.addEventListener('pointercancel',off); })();
+document.getElementById('gearUp').addEventListener('click',()=>shiftGear(1));
+document.getElementById('gearDown').addEventListener('click',()=>shiftGear(-1));
+const mA=document.getElementById('modeAuto'), mM=document.getElementById('modeManual');
+mA.addEventListener('click',()=>{ selectedMode='auto'; mA.classList.add('on'); mM.classList.remove('on'); });
+mM.addEventListener('click',()=>{ selectedMode='manual'; mM.classList.add('on'); mA.classList.remove('on'); });
+const km={ArrowLeft:'left',ArrowRight:'right',ArrowUp:'gas',ArrowDown:'brake',a:'left',d:'right',w:'gas',s:'brake',c:'clutch',ф:'left',в:'right',ц:'gas',і:'brake',с:'clutch'};
+addEventListener('keydown',e=>{ const k=km[e.key]; if(k){ e.preventDefault(); input[k]=true; return; }
+  if(e.key==='e'||e.key==='E'||e.key==='у'){ shiftGear(1); } else if(e.key==='q'||e.key==='Q'||e.key==='й'){ shiftGear(-1); }
+  else if(e.key==='r'||e.key==='R'||e.key==='к'){ startEngine(); } });
 addEventListener('keyup',e=>{ const k=km[e.key]; if(k){ e.preventDefault(); input[k]=false; }});
 
 document.getElementById('modeBtn').addEventListener('click',()=>{ roadsOnly=!roadsOnly;
@@ -463,13 +555,16 @@ const SEQ=[
  {tap:'🔒 Пристебни ремінь безпеки', short:'Ремінь', flag:'belt', done:'Клац! Ремінь пристебнуто ✔'},
  {tap:'🔑 Заведи двигун', short:'Запалювання', flag:'engine', done:'Двигун заведено, гуде'},
  {tap:'🖐️ Зніми з ручника', short:'Ручник', done:'Ручник знято'},
- {tap:'⚙️ Увімкни передачу «D»', short:'Передача', done:'Готово до руху'},
+ {tap:'⚙️ Увімкни передачу (D / 1-ша)', short:'Передача', flag:'gear', done:'Готово до руху'},
  {tap:'🚦 Увімкни лівий поворотник', short:'Поворотник', done:'Поворотник блимає'},
  {auto:800, msg:'🚀 Рушаємо! Щасливої дороги, котику.'},
 ];
 let seqIdx=0, seqTimer=null;
-function initGame(){ car={x:0,y:0,heading:0,speed:0,engineRunning:false,belt:false,mode:'auto'};
+function initGame(){ car={x:0,y:0,heading:0,speed:0,engineRunning:false,belt:false,
+  mode:selectedMode, gear:0, clutch:1, rpm:0, gearDisp:'N', stallT:0};
   fuel=CFG.startFuel; money=CFG.startMoney; churchCd=0; blessing=0; job=null; lowShown=false;
+  document.getElementById('manualCtl').classList.toggle('hidden', selectedMode!=='manual');
+  document.getElementById('gearChip').classList.toggle('hidden', selectedMode!=='manual');
   document.getElementById('jobBtn').classList.remove('on'); updateHUD(); }
 function startGame(){ initGame(); car.engineRunning=true; car.belt=true;   // швидкий старт (фолбек/тест)
   document.getElementById('startScreen').classList.add('hidden'); document.getElementById('seq').classList.add('hidden');
@@ -490,6 +585,7 @@ function runSeqStep(){
 }
 function seqAction(){ const s=SEQ[seqIdx]; if(!s || !s.tap) return;
   if(s.flag==='belt') car.belt=true; if(s.flag==='engine') car.engineRunning=true;
+  if(s.flag==='gear' && car.mode==='manual'){ car.gear=1; car.clutch=1; }
   document.getElementById('seqSub').textContent = s.done || '';
   document.getElementById('seqBtn').classList.add('hidden');
   seqIdx++; clearTimeout(seqTimer); seqTimer=setTimeout(runSeqStep, 420); }
