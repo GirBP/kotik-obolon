@@ -89,6 +89,23 @@
         transform:rotate(-45deg); font-size:15px; box-shadow:0 2px 5px rgba(0,0,0,.35); border:2px solid #fff; }
   .poi span{ transform:rotate(45deg); }
   .poi.fuel{ background:#e8442e; } .poi.church{ background:#8a63d2; } .poi.job{ background:var(--accent); }
+
+  /* панель послідовності старту */
+  #seq{ position:absolute; left:0; right:0; bottom:0; z-index:25; padding:14px;
+        padding-bottom:calc(14px + env(safe-area-inset-bottom)); display:flex; justify-content:center;
+        background:linear-gradient(transparent, rgba(8,10,13,.55)); }
+  #seqCard{ background:#fff; color:var(--ink); border-radius:20px; padding:16px 18px; width:100%; max-width:430px;
+            box-shadow:0 12px 40px rgba(0,0,0,.45); }
+  #seqStep{ font-size:18px; font-weight:800; text-align:center; }
+  #seqSub{ font-size:12.5px; color:#2a8a45; font-weight:700; text-align:center; min-height:1.2em; margin-top:3px; }
+  #seqBtn{ margin-top:12px; width:100%; background:var(--green); color:#fff; border:none; border-radius:14px;
+           padding:15px; font-size:17px; font-weight:800; }
+  #seqBtn:active{ transform:scale(.97); }
+  #seqBtn.hidden{ display:none; }
+  #seqList{ display:flex; flex-wrap:wrap; gap:6px; justify-content:center; margin-top:12px; }
+  #seqList .it{ font-size:11px; padding:4px 9px; border-radius:9px; background:#eef0f3; color:#9aa0a8; font-weight:700; }
+  #seqList .it.done{ background:#d7f0dd; color:#1c7a3a; }
+  #seqList .it.cur{ background:var(--accent); color:#3a2a05; }
 </style>
 </head>
 <body>
@@ -129,6 +146,15 @@
   <div class="cluster">
     <button class="btn" id="brake"><span class="ic">✋</span>Гальмо</button>
     <button class="btn" id="gas"><span class="ic">⛽</span>Газ</button>
+  </div>
+</div>
+
+<div id="seq" class="hidden">
+  <div id="seqCard">
+    <div id="seqStep">—</div>
+    <div id="seqSub"></div>
+    <button id="seqBtn" class="hidden">✔ Зробити</button>
+    <div id="seqList"></div>
   </div>
 </div>
 
@@ -361,11 +387,14 @@ function tick(now){
 function step(dt){
   if(input.left)  car.heading-=CFG.turn*dt;
   if(input.right) car.heading+=CFG.turn*dt;
-  if(fuel>0){
+  if(fuel>0 && car.engineRunning){
     if(input.gas) car.speed+=CFG.accel*dt;
     else if(input.brake) car.speed-=CFG.brake*dt;
     else car.speed-=CFG.friction*dt;
-  } else { car.speed-=CFG.friction*dt; toastLowFuelMaybe(); }
+  } else {
+    if(input.brake) car.speed-=CFG.brake*dt; else car.speed-=CFG.friction*dt;
+    if(fuel<=0) toastLowFuelMaybe();
+  }
   car.speed=Math.max(0,Math.min(CFG.maxSpeed,car.speed));
 
   const mps=car.speed/3.6, distM=mps*dt;
@@ -425,13 +454,54 @@ document.getElementById('fullLPG').addEventListener('click',()=>doRefuel('LPG'))
 document.getElementById('fuel500').addEventListener('click',()=>doRefuel('500'));
 document.getElementById('fuelClose').addEventListener('click',closeFuel);
 
-// ================= СТАРТ =================
-function startGame(){ car={x:0,y:0,heading:0,speed:0}; fuel=CFG.startFuel; money=CFG.startMoney;
-  churchCd=0; blessing=0; job=null; lowShown=false;
-  document.getElementById('jobBtn').classList.remove('on');
+// ================= СТАРТ + ПОСЛІДОВНІСТЬ =================
+const SEQ=[
+ {auto:1200, msg:'🚶 Виходиш з дому…'},
+ {auto:1600, msg:'🚶 Прямуєш до авто…'},
+ {tap:'🔓 Тапни, щоб відімкнути авто', short:'Замок', done:'Біп-біп! Авто відімкнено'},
+ {auto:900, msg:'🚪 Сідаєш і зачиняєш двері…'},
+ {tap:'🔒 Пристебни ремінь безпеки', short:'Ремінь', flag:'belt', done:'Клац! Ремінь пристебнуто ✔'},
+ {tap:'🔑 Заведи двигун', short:'Запалювання', flag:'engine', done:'Двигун заведено, гуде'},
+ {tap:'🖐️ Зніми з ручника', short:'Ручник', done:'Ручник знято'},
+ {tap:'⚙️ Увімкни передачу «D»', short:'Передача', done:'Готово до руху'},
+ {tap:'🚦 Увімкни лівий поворотник', short:'Поворотник', done:'Поворотник блимає'},
+ {auto:800, msg:'🚀 Рушаємо! Щасливої дороги, котику.'},
+];
+let seqIdx=0, seqTimer=null;
+function initGame(){ car={x:0,y:0,heading:0,speed:0,engineRunning:false,belt:false,mode:'auto'};
+  fuel=CFG.startFuel; money=CFG.startMoney; churchCd=0; blessing=0; job=null; lowShown=false;
+  document.getElementById('jobBtn').classList.remove('on'); updateHUD(); }
+function startGame(){ initGame(); car.engineRunning=true; car.belt=true;   // швидкий старт (фолбек/тест)
+  document.getElementById('startScreen').classList.add('hidden'); document.getElementById('seq').classList.add('hidden');
+  phase='play'; lastT=performance.now(); }
+function startSequence(){ initGame();
   document.getElementById('startScreen').classList.add('hidden');
-  updateHUD(); phase='play'; lastT=performance.now(); }
-document.getElementById('startBtn').addEventListener('click',startGame);
+  const p=fromXY(0,0); map.setView([p.lat,p.lng],CFG.zoom,{animate:false});
+  phase='sequence'; seqIdx=0; document.getElementById('seq').classList.remove('hidden'); runSeqStep(); }
+function runSeqStep(){
+  if(seqIdx>=SEQ.length){ finishSequence(); return; }
+  const s=SEQ[seqIdx];
+  document.getElementById('seqStep').textContent = s.tap || s.msg;
+  document.getElementById('seqSub').textContent = '';
+  renderSeqList();
+  const btn=document.getElementById('seqBtn');
+  if(s.tap){ btn.classList.remove('hidden'); }
+  else { btn.classList.add('hidden'); clearTimeout(seqTimer); seqTimer=setTimeout(()=>{ seqIdx++; runSeqStep(); }, s.auto); }
+}
+function seqAction(){ const s=SEQ[seqIdx]; if(!s || !s.tap) return;
+  if(s.flag==='belt') car.belt=true; if(s.flag==='engine') car.engineRunning=true;
+  document.getElementById('seqSub').textContent = s.done || '';
+  document.getElementById('seqBtn').classList.add('hidden');
+  seqIdx++; clearTimeout(seqTimer); seqTimer=setTimeout(runSeqStep, 420); }
+function renderSeqList(){ const items=SEQ.map((s,i)=>({s,i})).filter(o=>o.s.tap);
+  document.getElementById('seqList').innerHTML = items.map(o=>{
+    const cls=o.i<seqIdx?'done':(o.i===seqIdx?'cur':'');
+    return `<span class="it ${cls}">${o.s.short}</span>`; }).join(''); }
+function finishSequence(){ document.getElementById('seq').classList.add('hidden');
+  car.engineRunning=true; phase='play'; lastT=performance.now();
+  toast('🚗 Поїхали! Ремінь пристебнуто, двигун працює.'); }
+document.getElementById('startBtn').addEventListener('click', startSequence);
+document.getElementById('seqBtn').addEventListener('click', seqAction);
 addEventListener('resize',()=>map.invalidateSize()); setTimeout(()=>map.invalidateSize(),300);
 
 // ================= ЗАВАНТАЖЕННЯ ДАНИХ =================
