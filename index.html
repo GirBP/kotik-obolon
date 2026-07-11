@@ -498,8 +498,8 @@ function step(dt){
   if(roadsOnly){
     const r=nearestRoad(car.x,car.y);
     if(r){
-      const k=Math.min(1,dt*10);                       // сильний «магніт» до осі дороги
-      car.x+=(r.px-car.x)*k; car.y+=(r.py-car.y)*k;
+      if(r.dist>14){ car.x=r.px; car.y=r.py; }         // не пускаємо далеко: жорстко на вісь дороги
+      else { const k=Math.min(1,dt*10); car.x+=(r.px-car.x)*k; car.y+=(r.py-car.y)*k; }  // близько — м'який магніт
       // вирівняти курс до напряму дороги (найближчий з двох)
       let a=r.ang; let diff=((a-car.heading+Math.PI)%(2*Math.PI))-Math.PI;
       if(Math.abs(diff)>Math.PI/2){ a+=Math.PI; diff=((a-car.heading+Math.PI)%(2*Math.PI))-Math.PI; }
