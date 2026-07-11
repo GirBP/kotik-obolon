@@ -17,6 +17,11 @@
   #car{ position:absolute; left:50%; top:50%; z-index:5; width:26px; height:40px;
         margin:-20px 0 0 -13px; transition:transform .05s linear; pointer-events:none;
         filter:drop-shadow(0 2px 3px rgba(0,0,0,.4)); }
+  #steerZone{ position:absolute; left:0; right:0; top:56px; bottom:0; z-index:6; touch-action:none; }
+  #steerZone.hidden{ display:none; }
+  #steerHint{ position:absolute; left:50%; bottom:44px; transform:translateX(-50%); z-index:7; text-align:center;
+              color:rgba(20,22,26,.42); font-size:12.5px; font-weight:700; pointer-events:none; line-height:1.4; }
+  #steerHint.hidden{ display:none; }
 
   /* HUD */
   #hud{ position:absolute; top:0; left:0; right:0; z-index:10; padding:8px;
@@ -122,6 +127,8 @@
 </head>
 <body>
 <div id="map"></div>
+<div id="steerZone" class="hidden"></div>
+<div id="steerHint" class="hidden">👆 Тягни пальцем ліворуч/праворуч — кермуй<br>(газ автоматичний)</div>
 
 <svg id="car" viewBox="0 0 44 64">
   <path d="M9 16 L4 3 L17 11 Z" fill="#d98a1e"/><path d="M35 16 L40 3 L27 11 Z" fill="#d98a1e"/>
@@ -147,6 +154,7 @@
 <div id="actions">
   <button class="act" id="modeBtn" title="Режим руху">🛣️<small>ДОРОГИ</small></button>
   <button class="act" id="jobBtn" title="Замовлення">📦<small>РОБОТА</small></button>
+  <button class="act" id="handBtn" title="Керування">✌️<small>2 РУКИ</small></button>
 </div>
 
 <button id="ctx"></button>
@@ -222,7 +230,7 @@ const CFG = {
   tank: 50, startFuel: 16, startMoney: 3000,
   consCity: 12.0,           // л/100км (місто, ігровий темп)
   idleLh: 1.1,              // л/год на холостому
-  maxSpeed: 58, accel: 22, brake: 60, friction: 10, turn: 2.7,
+  maxSpeed: 58, accel: 22, brake: 60, friction: 10, turn: 2.7, cruise: 42,
   jobBase: 25, jobPerKm: 14,
   churchBonus: 50, churchCooldownSec: 90,
   arrive: 22,              // м — радіус «прибуття»
@@ -315,6 +323,7 @@ let job=null; // {from,to,stage:'pickup'|'deliver',fromMk,toMk,dist}
 let jobMarker=null;
 const input={ left:false, right:false, gas:false, brake:false, clutch:false };
 let selectedMode='auto';
+let handedMode='two', steerTarget=0, steerActive=false, steerStartX=0;
 let segments=[], grid=new Map(), GRID=60;
 let fuelMarks=[], churchMarks=[], stations=[];
 let lastT=0;
@@ -470,6 +479,11 @@ function tick(now){
   step(dt);
 }
 function step(dt){
+  if(handedMode==='one'){
+    car.heading += steerTarget*CFG.turn*dt;                       // тягни-кермуй
+    if(car.engineRunning && fuel>0 && !input.brake && Math.abs(car.speed)<CFG.cruise) input.gas=true;
+    else if(!input.brake) input.gas=false;                        // автогаз до крейсерської
+  }
   if(input.left)  car.heading-=CFG.turn*dt;
   if(input.right) car.heading+=CFG.turn*dt;
   // зчеплення (плавно) + трансмісія (авто/механіка)
@@ -489,7 +503,8 @@ function step(dt){
       // вирівняти курс до напряму дороги (найближчий з двох)
       let a=r.ang; let diff=((a-car.heading+Math.PI)%(2*Math.PI))-Math.PI;
       if(Math.abs(diff)>Math.PI/2){ a+=Math.PI; diff=((a-car.heading+Math.PI)%(2*Math.PI))-Math.PI; }
-      const align=(input.left||input.right)?dt*1.5:dt*5;   // менше вирівнювання під час керма (щоб можна було повертати)
+      const steering=(input.left||input.right||Math.abs(steerTarget)>0.15);
+      const align=steering?dt*1.5:dt*5;   // менше вирівнювання під час керма (щоб можна було повертати)
       car.heading+=diff*Math.min(1,align);
       streetName(r.name);
     }
@@ -540,6 +555,25 @@ document.getElementById('modeBtn').addEventListener('click',()=>{ roadsOnly=!roa
   b.innerHTML = roadsOnly?'🛣️<small>ДОРОГИ</small>':'🗺️<small>БУДЬ-ДЕ</small>';
   toast(roadsOnly?'Режим: лише по дорогах':'Режим: їзда будь-де'); });
 document.getElementById('jobBtn').addEventListener('click',newJob);
+// ===== керування однією рукою (тягни-кермуй + автогаз) =====
+(function(){ const z=document.getElementById('steerZone');
+  z.addEventListener('pointerdown',e=>{ e.preventDefault(); steerActive=true; steerStartX=e.clientX; try{z.setPointerCapture(e.pointerId);}catch(_){ } });
+  z.addEventListener('pointermove',e=>{ if(!steerActive) return; const dx=e.clientX-steerStartX; steerTarget=Math.max(-1,Math.min(1, dx/(window.innerWidth*0.22))); });
+  const off=()=>{ steerActive=false; steerTarget=0; };
+  z.addEventListener('pointerup',off); z.addEventListener('pointercancel',off); })();
+function applyHanded(){ const one=handedMode==='one';
+  document.getElementById('steerZone').classList.toggle('hidden', !one);
+  document.getElementById('steerHint').classList.toggle('hidden', !(one && phase==='play'));
+  document.getElementById('left').style.display=one?'none':'';
+  document.getElementById('right').style.display=one?'none':'';
+  document.getElementById('gas').style.display=one?'none':'';
+  const hb=document.getElementById('handBtn'); hb.innerHTML=one?'🖐️<small>1 РУКА</small>':'✌️<small>2 РУКИ</small>'; hb.classList.toggle('on',one);
+  if(one){ selectedMode='auto'; if(car&&'mode' in car) car.mode='auto';
+    document.getElementById('modeAuto').classList.add('on'); document.getElementById('modeManual').classList.remove('on');
+    document.getElementById('manualCtl').classList.add('hidden'); document.getElementById('gearChip').classList.add('hidden'); input.gas=false; }
+}
+window.applyHanded=applyHanded;
+document.getElementById('handBtn').addEventListener('click',()=>{ handedMode=handedMode==='one'?'two':'one'; applyHanded(); });
 document.getElementById('ctx').addEventListener('click',()=>{ if(ctxAction) ctxAction(); });
 document.getElementById('fullA95').addEventListener('click',()=>doRefuel('A95'));
 document.getElementById('fullLPG').addEventListener('click',()=>doRefuel('LPG'));
@@ -560,7 +594,8 @@ const SEQ=[
  {auto:800, msg:'🚀 Рушаємо! Щасливої дороги, котику.'},
 ];
 let seqIdx=0, seqTimer=null;
-function initGame(){ car={x:0,y:0,heading:0,speed:0,engineRunning:false,belt:false,
+function initGame(){ if(handedMode==='one') selectedMode='auto';
+  car={x:0,y:0,heading:0,speed:0,engineRunning:false,belt:false,
   mode:selectedMode, gear:0, clutch:1, rpm:0, gearDisp:'N', stallT:0};
   fuel=CFG.startFuel; money=CFG.startMoney; churchCd=0; blessing=0; job=null; lowShown=false;
   document.getElementById('manualCtl').classList.toggle('hidden', selectedMode!=='manual');
@@ -568,7 +603,7 @@ function initGame(){ car={x:0,y:0,heading:0,speed:0,engineRunning:false,belt:fal
   document.getElementById('jobBtn').classList.remove('on'); updateHUD(); }
 function startGame(){ initGame(); car.engineRunning=true; car.belt=true;   // швидкий старт (фолбек/тест)
   document.getElementById('startScreen').classList.add('hidden'); document.getElementById('seq').classList.add('hidden');
-  phase='play'; lastT=performance.now(); }
+  phase='play'; lastT=performance.now(); window.applyHanded&&window.applyHanded(); }
 function startSequence(){ initGame();
   document.getElementById('startScreen').classList.add('hidden');
   const p=fromXY(0,0); map.setView([p.lat,p.lng],CFG.zoom,{animate:false});
@@ -594,7 +629,7 @@ function renderSeqList(){ const items=SEQ.map((s,i)=>({s,i})).filter(o=>o.s.tap)
     const cls=o.i<seqIdx?'done':(o.i===seqIdx?'cur':'');
     return `<span class="it ${cls}">${o.s.short}</span>`; }).join(''); }
 function finishSequence(){ document.getElementById('seq').classList.add('hidden');
-  car.engineRunning=true; phase='play'; lastT=performance.now();
+  car.engineRunning=true; phase='play'; lastT=performance.now(); window.applyHanded&&window.applyHanded();
   toast('🚗 Поїхали! Ремінь пристебнуто, двигун працює.'); }
 document.getElementById('startBtn').addEventListener('click', startSequence);
 document.getElementById('seqBtn').addEventListener('click', seqAction);
