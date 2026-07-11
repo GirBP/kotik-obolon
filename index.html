@@ -6,112 +6,120 @@
 <title>Котик за кермом — Оболонь</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
-  :root{ --accent:#F5A623; --green:#2eb35c; --red:#d93a34; --ink:#1a1c20; }
+  :root{ --accent:#F5A623; --green:#2eb35c; --red:#d93a34; --blue:#2b7fd4; --ink:#1a1c20; }
   *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body{ margin:0; height:100%; overflow:hidden; background:#0e1013; position:fixed; inset:0; width:100%;
     overscroll-behavior:none; touch-action:none; -webkit-user-select:none; user-select:none;
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
-  #map{ position:absolute; inset:0; z-index:1; background:#aadaff; }
-  /* прибрати керування картою — це «фон», по якому їдемо */
+  #map{ position:absolute; inset:0; z-index:1; background:#e8e6df; }
   .leaflet-control,.leaflet-top,.leaflet-bottom{ display:none !important; }
 
-  /* Котик-машинка — завжди в центрі екрана */
-  #car{ position:absolute; left:50%; top:50%; z-index:5; width:44px; height:64px;
-        margin:-32px 0 0 -22px; transition:transform .05s linear; pointer-events:none;
-        filter:drop-shadow(0 3px 4px rgba(0,0,0,.35)); }
+  #car{ position:absolute; left:50%; top:50%; z-index:5; width:26px; height:40px;
+        margin:-20px 0 0 -13px; transition:transform .05s linear; pointer-events:none;
+        filter:drop-shadow(0 2px 3px rgba(0,0,0,.4)); }
 
   /* HUD */
-  #hud{ position:absolute; top:0; left:0; right:0; z-index:10; padding:10px;
-        display:flex; gap:8px; align-items:flex-start; pointer-events:none;
-        padding-top:calc(10px + env(safe-area-inset-top)); }
-  .chip{ background:rgba(20,22,26,.82); color:#fff; border-radius:14px; padding:8px 12px;
-         font-weight:700; font-size:14px; backdrop-filter:blur(6px); }
-  .chip small{ display:block; font-weight:500; font-size:11px; opacity:.7; }
-  #targetChip{ flex:1; display:flex; align-items:center; gap:10px; }
-  #compass{ width:34px; height:34px; flex:0 0 auto; transition:transform .1s linear; }
+  #hud{ position:absolute; top:0; left:0; right:0; z-index:10; padding:8px;
+        padding-top:calc(8px + env(safe-area-inset-top)); display:flex; gap:6px; flex-wrap:wrap; pointer-events:none; }
+  .chip{ background:rgba(20,22,26,.82); color:#fff; border-radius:12px; padding:6px 10px;
+         font-weight:700; font-size:13px; backdrop-filter:blur(6px); display:flex; align-items:center; gap:6px; }
+  .chip small{ font-weight:500; font-size:10px; opacity:.7; }
+  .gauge{ width:52px; height:6px; background:#444; border-radius:3px; overflow:hidden; }
+  .gauge i{ display:block; height:100%; background:var(--green); width:50%; }
+  #street{ flex:1; min-width:0; }
+  #street span{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-  /* Керування */
+  /* банер завдання / підказки */
+  #banner{ position:absolute; top:52px; left:8px; right:8px; z-index:9; pointer-events:none; display:flex; justify-content:center; }
+  #banner .msg{ background:var(--accent); color:#3a2a05; font-weight:700; font-size:13px; padding:8px 14px;
+     border-radius:14px; text-align:center; max-width:92%; box-shadow:0 6px 18px rgba(0,0,0,.3); opacity:0; transition:opacity .3s; }
+  #banner .msg.show{ opacity:1; }
+
+  /* права колонка дій */
+  #actions{ position:absolute; right:8px; top:96px; z-index:10; display:flex; flex-direction:column; gap:8px; }
+  .act{ pointer-events:auto; width:52px; height:52px; border:none; border-radius:14px; background:rgba(20,22,26,.8);
+        color:#fff; font-size:22px; box-shadow:0 3px 10px rgba(0,0,0,.3); }
+  .act:active{ transform:scale(.92); }
+  .act.on{ background:var(--green); }
+  .act small{ display:block; font-size:8px; font-weight:700; }
+
+  /* контекстна кнопка (заправка/церква/завдання) */
+  #ctx{ position:absolute; left:50%; bottom:130px; transform:translateX(-50%); z-index:12; pointer-events:auto;
+        background:var(--blue); color:#fff; font-weight:800; font-size:15px; padding:12px 20px; border:none; border-radius:16px;
+        box-shadow:0 6px 18px rgba(0,0,0,.35); display:none; }
+  #ctx:active{ transform:translateX(-50%) scale(.95); }
+
+  /* керування (дві зони) */
   #controls{ position:absolute; bottom:0; left:0; right:0; z-index:10;
              display:flex; justify-content:space-between; align-items:flex-end; padding:14px;
              padding-bottom:calc(14px + env(safe-area-inset-bottom)); pointer-events:none; }
   .cluster{ display:flex; gap:10px; align-items:flex-end; }
-  .btn{ pointer-events:auto; user-select:none; -webkit-user-select:none; touch-action:none; border:none;
-        color:#fff; font-weight:800; border-radius:22px;
-        display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
+  .btn{ pointer-events:auto; user-select:none; -webkit-user-select:none; touch-action:none; border:none; color:#fff; font-weight:800;
+        border-radius:20px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
         box-shadow:0 4px 12px rgba(0,0,0,.32); transition:transform .07s, filter .07s; }
   .btn:active{ transform:scale(.92); filter:brightness(1.12); }
-  .btn .ic{ font-size:26px; line-height:1; }
-  .btn.steer{ width:74px; height:98px; font-size:34px; background:rgba(20,22,26,.8); }
-  #brake{ width:80px; height:98px; background:var(--red); font-size:14px; }
-  #gas{ width:100px; height:112px; background:var(--green); font-size:16px; }
+  .btn .ic{ font-size:24px; line-height:1; }
+  .btn.steer{ width:70px; height:90px; font-size:30px; background:rgba(20,22,26,.8); }
+  #brake{ width:76px; height:90px; background:var(--red); font-size:13px; }
+  #gas{ width:92px; height:100px; background:var(--green); font-size:15px; }
 
-  /* Оверлеї */
+  /* оверлеї / панелі */
   .overlay{ position:absolute; inset:0; z-index:30; display:flex; align-items:center; justify-content:center;
-            background:rgba(8,10,13,.72); backdrop-filter:blur(3px); padding:24px; }
-  .card{ background:#fff; color:var(--ink); border-radius:24px; padding:26px 24px; max-width:400px; width:100%;
-         text-align:center; box-shadow:0 20px 60px rgba(0,0,0,.4); }
-  .card h1{ margin:.2em 0; font-size:26px; }
-  .card p{ color:#555; font-size:15px; line-height:1.45; margin:.6em 0; }
-  .paw{ font-size:60px; }
-  .cta{ margin-top:14px; background:var(--accent); color:#3a2a05; border:none; border-radius:16px;
-        padding:15px 22px; font-size:18px; font-weight:800; width:100%; cursor:pointer; }
+            background:rgba(8,10,13,.72); backdrop-filter:blur(3px); padding:22px; }
+  .card{ background:#fff; color:var(--ink); border-radius:22px; padding:22px; max-width:400px; width:100%; text-align:center;
+         box-shadow:0 20px 60px rgba(0,0,0,.4); max-height:90vh; overflow:auto; }
+  .card h1{ margin:.2em 0; font-size:23px; }
+  .card p{ color:#555; font-size:14px; line-height:1.45; margin:.5em 0; }
+  .paw{ font-size:52px; }
+  .cta{ margin-top:10px; background:var(--accent); color:#3a2a05; border:none; border-radius:14px; padding:14px 20px;
+        font-size:17px; font-weight:800; width:100%; cursor:pointer; }
+  .cta.sec{ background:#eceef1; color:var(--ink); }
   .cta:active{ transform:scale(.97); }
-  .legend{ text-align:left; background:#f4f5f7; border-radius:14px; padding:12px 14px; margin-top:12px; font-size:13px; color:#444; }
+  .row{ display:flex; gap:8px; margin-top:8px; }
+  .row .cta{ margin-top:0; }
+  .legend{ text-align:left; background:#f4f5f7; border-radius:12px; padding:12px; margin-top:10px; font-size:12.5px; color:#444; }
   .legend b{ color:var(--ink); }
+  .fuelopt{ display:flex; justify-content:space-between; align-items:center; background:#f4f5f7; border-radius:12px;
+            padding:10px 12px; margin-top:8px; font-size:14px; }
+  .fuelopt b{ font-size:16px; }
   .hidden{ display:none !important; }
 
-  /* спливна ПДР-підказка */
-  #toast{ position:absolute; left:50%; top:64px; transform:translateX(-50%) translateY(-20px);
-          z-index:20; background:var(--accent); color:#3a2a05; font-weight:700; font-size:14px;
-          padding:12px 18px; border-radius:16px; max-width:88%; text-align:center; opacity:0;
-          transition:opacity .3s, transform .3s; box-shadow:0 8px 24px rgba(0,0,0,.3); pointer-events:none; }
-  #toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
-
-  /* мітка локації на карті */
-  .cp-icon{ display:flex; align-items:center; justify-content:center; width:38px; height:38px;
-            background:#fff; border:3px solid var(--accent); border-radius:50%; font-size:20px;
-            box-shadow:0 3px 8px rgba(0,0,0,.3); }
-  .cp-icon.done{ border-color:var(--green); opacity:.55; }
+  /* мітки на карті */
+  .poi{ display:flex; align-items:center; justify-content:center; width:30px; height:30px; border-radius:50% 50% 50% 0;
+        transform:rotate(-45deg); font-size:15px; box-shadow:0 2px 5px rgba(0,0,0,.35); border:2px solid #fff; }
+  .poi span{ transform:rotate(45deg); }
+  .poi.fuel{ background:#e8442e; } .poi.church{ background:#8a63d2; } .poi.job{ background:var(--accent); }
 </style>
 </head>
 <body>
-
 <div id="map"></div>
 
-<!-- Котик-машинка (вигляд згори) -->
 <svg id="car" viewBox="0 0 44 64">
-  <!-- вушка -->
-  <path d="M9 16 L4 3 L17 11 Z" fill="#d98a1e"/>
-  <path d="M35 16 L40 3 L27 11 Z" fill="#d98a1e"/>
-  <path d="M10 14 L7 6 L15 11 Z" fill="#f7b8c0"/>
-  <path d="M34 14 L37 6 L29 11 Z" fill="#f7b8c0"/>
-  <!-- кузов -->
+  <path d="M9 16 L4 3 L17 11 Z" fill="#d98a1e"/><path d="M35 16 L40 3 L27 11 Z" fill="#d98a1e"/>
+  <path d="M10 14 L7 6 L15 11 Z" fill="#f7b8c0"/><path d="M34 14 L37 6 L29 11 Z" fill="#f7b8c0"/>
   <rect x="6" y="10" width="32" height="50" rx="13" fill="#F5A623"/>
-  <!-- лобове скло -->
   <rect x="11" y="15" width="22" height="12" rx="5" fill="#bfe0f2"/>
-  <!-- очі -->
-  <circle cx="17" cy="21" r="2.4" fill="#1a1c20"/>
-  <circle cx="27" cy="21" r="2.4" fill="#1a1c20"/>
-  <!-- фари -->
-  <circle cx="12" cy="13" r="2.2" fill="#fff6c2"/>
-  <circle cx="32" cy="13" r="2.2" fill="#fff6c2"/>
-  <!-- колеса -->
-  <rect x="3" y="20" width="4" height="12" rx="2" fill="#222"/>
-  <rect x="37" y="20" width="4" height="12" rx="2" fill="#222"/>
-  <rect x="3" y="40" width="4" height="12" rx="2" fill="#222"/>
-  <rect x="37" y="40" width="4" height="12" rx="2" fill="#222"/>
+  <circle cx="17" cy="21" r="2.4" fill="#1a1c20"/><circle cx="27" cy="21" r="2.4" fill="#1a1c20"/>
+  <circle cx="12" cy="13" r="2.2" fill="#fff6c2"/><circle cx="32" cy="13" r="2.2" fill="#fff6c2"/>
+  <rect x="3" y="20" width="4" height="12" rx="2" fill="#222"/><rect x="37" y="20" width="4" height="12" rx="2" fill="#222"/>
+  <rect x="3" y="40" width="4" height="12" rx="2" fill="#222"/><rect x="37" y="40" width="4" height="12" rx="2" fill="#222"/>
 </svg>
 
 <div id="hud">
-  <div class="chip"><span id="score">0/8</span><small>локацій</small></div>
-  <div class="chip"><span id="timer">0:00</span><small>час</small></div>
-  <div class="chip" id="targetChip">
-    <svg id="compass" viewBox="0 0 34 34"><path d="M17 3 L24 20 L17 16 L10 20 Z" fill="#F5A623"/></svg>
-    <div><span id="targetName">—</span><small id="targetDist"></small></div>
-  </div>
+  <div class="chip">💵 <span id="money">3000</span> <small>грн</small></div>
+  <div class="chip">⛽ <span class="gauge"><i id="fuelBar"></i></span> <span id="range">—</span><small>км</small></div>
+  <div class="chip">🚗 <span id="speed">0</span><small>км/год</small></div>
+  <div class="chip" id="street"><span>—</span></div>
 </div>
 
-<div id="toast"></div>
+<div id="banner"><div class="msg" id="bannerMsg"></div></div>
+
+<div id="actions">
+  <button class="act" id="modeBtn" title="Режим руху">🛣️<small>ДОРОГИ</small></button>
+  <button class="act" id="jobBtn" title="Замовлення">📦<small>РОБОТА</small></button>
+</div>
+
+<button id="ctx"></button>
 
 <div id="controls">
   <div class="cluster">
@@ -119,197 +127,319 @@
     <button class="btn steer" id="right">▶</button>
   </div>
   <div class="cluster">
-    <button class="btn pedal" id="brake"><span class="ic">✋</span>Гальмо</button>
-    <button class="btn pedal" id="gas"><span class="ic">⛽</span>Газ</button>
+    <button class="btn" id="brake"><span class="ic">✋</span>Гальмо</button>
+    <button class="btn" id="gas"><span class="ic">⛽</span>Газ</button>
   </div>
 </div>
 
-<!-- Старт -->
 <div class="overlay" id="startScreen">
   <div class="card">
     <div class="paw">🐱🚗</div>
     <h1>Котик за кермом</h1>
-    <p>Катайся <b>Оболонню</b> й об'їдь усі <b>8 локацій</b> Києва якнайшвидше. На кожній — маленька підказка з ПДР 😉</p>
+    <p><b>Симулятор водіння Оболонню.</b> Катайся реальними вулицями, бери замовлення й заробляй, заправляйся на справжніх АЗС, стеж за пальним і бюджетом.</p>
     <div class="legend">
-      <b>Керування:</b><br>
-      📱 Телефон — <b>зліва</b> повороти ◀ ▶, <b>справа</b> Газ і Гальмо<br>
-      💻 Комп'ютер — стрілки ← ↑ → ↓ (або W A S D)
+      <b>Керування:</b> зліва ◀ ▶ повороти, справа Газ/Гальмо (ПК: ← ↑ → ↓).<br>
+      <b>🛣️</b> — перемикач «лише по дорогах / будь-де».<br>
+      <b>📦</b> — взяти замовлення (везеш з А в Б за гроші).<br>
+      Під'їдь до <b>⛽ АЗС</b> — заправка, до <b>⛪ храму</b> — бонус.
     </div>
     <button class="cta" id="startBtn">Поїхали! 🚦</button>
+    <div id="loadNote" style="font-size:12px;color:#999;margin-top:8px;">Завантаження карти Оболоні…</div>
   </div>
 </div>
 
-<!-- Перемога -->
-<div class="overlay hidden" id="winScreen">
+<div class="overlay hidden" id="fuelPanel">
   <div class="card">
-    <div class="paw">🏁🐱</div>
-    <h1>Усю Оболонь об'їхано!</h1>
-    <p id="winText"></p>
-    <button class="cta" id="againBtn">Ще раз 🔁</button>
+    <div class="paw">⛽</div>
+    <h1 id="fuelStation">АЗС</h1>
+    <p>Бак: <b id="fuelNow">—</b> / 50 л · Гаманець: <b id="fuelMoney">—</b> грн</p>
+    <div class="fuelopt"><span>А-95</span><b id="priceA95">—</b></div>
+    <div class="fuelopt"><span>Газ (LPG)</span><b id="priceLPG">—</b></div>
+    <button class="cta" id="fullA95">Повний бак А-95</button>
+    <div class="row">
+      <button class="cta sec" id="fullLPG">Повний газ</button>
+      <button class="cta sec" id="fuel500">На 500 грн</button>
+    </div>
+    <button class="cta sec" id="fuelClose" style="margin-top:8px;">Закрити</button>
   </div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-// ---------- Локації Оболоні (реальні координати) ----------
-const CHECKPOINTS = [
-  { name:"Метро «Оболонь»",        lat:50.50130, lng:30.49830, emoji:"🚇",
-    tip:"У населеному пункті — не більше 50 км/год!" },
-  { name:"Метро «Мінська»",        lat:50.51220, lng:30.49850, emoji:"🚇",
-    tip:"На «зебрі» завжди пропускай пішоходів." },
-  { name:"Метро «Героїв Дніпра»",  lat:50.52230, lng:30.49900, emoji:"🚇",
-    tip:"Червоне світло — стоп, навіть якщо поспішаєш." },
-  { name:"ТРЦ Dream Town",          lat:50.52360, lng:30.49720, emoji:"🛍️",
-    tip:"На парковці тримай малу швидкість — до 20 км/год." },
-  { name:"Озеро Опечень",           lat:50.51400, lng:30.50650, emoji:"🦆",
-    tip:"Пристебни ремінь безпеки — це рятує життя." },
-  { name:"Оболонська набережна",    lat:50.51150, lng:30.51600, emoji:"🌊",
-    tip:"Дальнє світло вимикай за 250 м до зустрічних." },
-  { name:"Парк «Наталка»",          lat:50.51880, lng:30.51920, emoji:"🌳",
-    tip:"У житловій зоні перевагу мають пішоходи." },
-  { name:"Оболонський проспект",    lat:50.50650, lng:30.49950, emoji:"🛣️",
-    tip:"Дотримуйся дистанції до авто попереду." },
+// ================= КОНФІГ =================
+const CFG = {
+  zoom: 19, center: [50.5085, 30.5030],
+  tank: 50, startFuel: 16, startMoney: 3000,
+  consCity: 12.0,           // л/100км (місто, ігровий темп)
+  idleLh: 1.1,              // л/год на холостому
+  maxSpeed: 58, accel: 22, brake: 60, friction: 10, turn: 2.7,
+  jobBase: 25, jobPerKm: 14,
+  churchBonus: 50, churchCooldownSec: 90,
+  arrive: 22,              // м — радіус «прибуття»
+};
+const BRAND_PRICE = { WOG:78.9, ОККО:78.9, SOCAR:77.9, KLO:72.9, "КЛО":72.9,
+  "Народна":71.0, Parallel:73.0 };
+const LPG_PRICE = 40.0;
+
+// Орієнтири для замовлень (реальні місця Оболоні)
+const LANDMARKS = [
+  { name:"Метро «Оболонь»", lat:50.50130, lng:30.49830 },
+  { name:"Метро «Мінська»", lat:50.51220, lng:30.49850 },
+  { name:"Метро «Героїв Дніпра»", lat:50.52230, lng:30.49900 },
+  { name:"ТРЦ Dream Town", lat:50.52360, lng:30.49720 },
+  { name:"Парк «Наталка»", lat:50.51880, lng:30.51920 },
+  { name:"Оболонська набережна", lat:50.51150, lng:30.51600 },
+  { name:"Озеро Опечень", lat:50.51400, lng:30.50650 },
+  { name:"Оболонський проспект", lat:50.50650, lng:30.49950 },
 ];
 
-// ---------- Карта ----------
-const START = [50.5085, 30.5030];
-const ZOOM = 16;
-const map = L.map('map', {
-  center: START, zoom: ZOOM, zoomControl:false, attributionControl:false,
-  dragging:false, scrollWheelZoom:false, doubleClickZoom:false, boxZoom:false,
-  keyboard:false, touchZoom:false, inertia:false, zoomSnap:0,
-});
-L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-  maxZoom: 20, subdomains:'abcd'
-}).addTo(map);
+// ================= КАРТА =================
+const map = L.map('map', { center: CFG.center, zoom: CFG.zoom, zoomControl:false, attributionControl:false,
+  dragging:false, scrollWheelZoom:false, doubleClickZoom:false, boxZoom:false, keyboard:false,
+  touchZoom:false, inertia:false, zoomSnap:0 });
+L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+  { maxZoom: CFG.zoom, maxNativeZoom: 19, subdomains:'abcd' }).addTo(map);
 
-// мітки локацій
-const markers = CHECKPOINTS.map(cp => {
-  const icon = L.divIcon({ className:'', html:`<div class="cp-icon">${cp.emoji}</div>`, iconSize:[38,38], iconAnchor:[19,19] });
-  return L.marker([cp.lat, cp.lng], { icon }).addTo(map);
-});
+// ================= ГЕО-ХЕЛПЕРИ (equirectangular XY) =================
+const ORG = { lat: CFG.center[0], lng: CFG.center[1] };
+const MLAT = 111320, MLNG = 111320 * Math.cos(ORG.lat*Math.PI/180);
+const toXY = (lat,lng) => ({ x:(lng-ORG.lng)*MLNG, y:(lat-ORG.lat)*MLAT });
+const fromXY = (x,y) => ({ lat:ORG.lat+y/MLAT, lng:ORG.lng+x/MLNG });
 
-// ---------- Стан гри ----------
+// ================= СТАН =================
 const carEl = document.getElementById('car');
-let state = 'menu';
-let car = { lat:START[0], lng:START[1], heading:0, speed:0 };  // heading: рад, 0=північ, за годинником
-let collected = 0, startTime = 0, lastT = 0;
-const input = { left:false, right:false, gas:false, brake:false };
+let phase='menu', roadsOnly=true;
+let car={ x:0, y:0, heading:0, speed:0 };
+let fuel=CFG.startFuel, money=CFG.startMoney, fuelType='A95';
+let churchCd=0, blessing=0;
+let job=null; // {from,to,stage:'pickup'|'deliver',fromMk,toMk,dist}
+let jobMarker=null;
+const input={ left:false, right:false, gas:false, brake:false };
+let segments=[], grid=new Map(), GRID=60;
+let fuelMarks=[], churchMarks=[], stations=[];
+let lastT=0;
 
-const MAX_SPEED = 24;     // м/с (~86 км/год)
-const ACCEL = 14;         // м/с²
-const BRAKE = 30;
-const FRICTION = 6;
-const TURN = 2.6;         // рад/с
-const M_PER_DEG_LAT = 111320;
-const mPerDegLng = lat => 111320 * Math.cos(lat * Math.PI/180);
-
-function nearestTarget(){
+// ================= ДОРОГИ (сегменти + сітка) =================
+function buildRoads(roads){
+  roads.forEach(line=>{ const g=line.g;
+    for(let i=0;i<g.length-1;i++){
+      const A=toXY(g[i][0],g[i][1]), B=toXY(g[i+1][0],g[i+1][1]);
+      const dx=B.x-A.x, dy=B.y-A.y, len2=dx*dx+dy*dy;
+      if(len2<0.5) continue;
+      const s={ ax:A.x,ay:A.y,dx,dy,len2, name:line.n||'' };
+      const idx=segments.push(s)-1;
+      // у сітку — по клітинках bbox
+      const x0=Math.min(A.x,B.x), x1=Math.max(A.x,B.x), y0=Math.min(A.y,B.y), y1=Math.max(A.y,B.y);
+      for(let cx=Math.floor(x0/GRID);cx<=Math.floor(x1/GRID);cx++)
+        for(let cy=Math.floor(y0/GRID);cy<=Math.floor(y1/GRID);cy++){
+          const k=cx+','+cy; if(!grid.has(k)) grid.set(k,[]); grid.get(k).push(idx);
+        }
+    }});
+}
+function nearestRoad(x,y){
+  const cx=Math.floor(x/GRID), cy=Math.floor(y/GRID);
   let best=null, bd=Infinity;
-  CHECKPOINTS.forEach((cp,i)=>{ if(cp.done) return;
-    const d = map.distance([car.lat,car.lng],[cp.lat,cp.lng]);
-    if(d<bd){ bd=d; best={cp,i,d}; }});
+  for(let R=1; R<=6; R++){
+    for(let i=-R;i<=R;i++) for(let j=-R;j<=R;j++){
+      const arr=grid.get((cx+i)+','+(cy+j)); if(!arr) continue;
+      for(const idx of arr){ const s=segments[idx];
+        let t=((x-s.ax)*s.dx+(y-s.ay)*s.dy)/s.len2; t=Math.max(0,Math.min(1,t));
+        const px=s.ax+t*s.dx, py=s.ay+t*s.dy;
+        const d=(x-px)*(x-px)+(y-py)*(y-py);
+        if(d<bd){ bd=d; best={px,py,dist:Math.sqrt(d),ang:Math.atan2(s.dx,s.dy),name:s.name}; }
+      }}
+    if(best) break;
+  }
   return best;
 }
-function bearing(fromLat,fromLng,toLat,toLng){
-  const dLat=(toLat-fromLat), dLng=(toLng-fromLng)*Math.cos(fromLat*Math.PI/180);
-  return Math.atan2(dLng, dLat); // 0=північ, за годинниковою
+
+// ================= POI =================
+function poiIcon(cls,emoji){ return L.divIcon({ className:'', iconSize:[30,30], iconAnchor:[15,30],
+  html:`<div class="poi ${cls}"><span>${emoji}</span></div>` }); }
+function addPOIs(pois){
+  pois.fuel.forEach(f=>{ const price=BRAND_PRICE[f.name]||74.0;
+    stations.push({...f, a95:price, lpg:LPG_PRICE});
+    fuelMarks.push(L.marker([f.lat,f.lng],{icon:poiIcon('fuel','⛽')}).addTo(map)); });
+  pois.churches.forEach(c=>{ churchMarks.push({...c,
+    mk:L.marker([c.lat,c.lng],{icon:poiIcon('church','⛪')}).addTo(map)}); });
 }
 
-// ---------- Ігровий цикл ----------
+// ================= ЕКОНОМІКА / ПАЛИВО =================
+function rangeKm(){ return (fuel / CFG.consCity) * 100; }
+function useFuel(distM){
+  let rate=CFG.consCity; if(blessing>0) rate*=0.85;
+  fuel=Math.max(0, fuel - (rate/100)*(distM/1000));
+}
+function dist(aLat,aLng,bLat,bLng){ return map.distance([aLat,aLng],[bLat,bLng]); }
+
+// ================= ЗАВДАННЯ =================
+function newJob(){
+  if(job){ toast('Спершу заверши поточне замовлення'); return; }
+  let a=LANDMARKS[Math.floor(Math.random()*LANDMARKS.length)], b;
+  do{ b=LANDMARKS[Math.floor(Math.random()*LANDMARKS.length)]; }while(b===a);
+  const d=dist(a.lat,a.lng,b.lat,b.lng)/1000;
+  job={ from:a, to:b, stage:'pickup', distKm:d, fare:Math.round(CFG.jobBase+CFG.jobPerKm*d) };
+  document.getElementById('jobBtn').classList.add('on');
+  setJobMarker(a);
+  toast(`📦 Забери посилку: ${a.name}`);
+}
+function setJobMarker(pt){
+  if(jobMarker) map.removeLayer(jobMarker);
+  jobMarker=L.marker([pt.lat,pt.lng],{icon:poiIcon('job','📦')}).addTo(map);
+}
+function checkJob(lat,lng){
+  if(!job) return;
+  const tgt = job.stage==='pickup'? job.from : job.to;
+  if(dist(lat,lng,tgt.lat,tgt.lng) < CFG.arrive){
+    if(job.stage==='pickup'){ job.stage='deliver'; setJobMarker(job.to);
+      toast(`Везіть до: ${job.to.name} (${job.fare} грн)`); }
+    else{ money+=job.fare; toast(`✅ Доставлено! +${job.fare} грн`);
+      if(jobMarker){ map.removeLayer(jobMarker); jobMarker=null; }
+      job=null; document.getElementById('jobBtn').classList.remove('on'); }
+  }
+}
+
+// ================= UI =================
+let bannerT;
+function toast(msg){ const b=document.getElementById('bannerMsg'); b.textContent=msg; b.classList.add('show');
+  clearTimeout(bannerT); bannerT=setTimeout(()=>b.classList.remove('show'),3400); }
+function updateHUD(){
+  document.getElementById('money').textContent=Math.round(money);
+  document.getElementById('speed').textContent=Math.round(car.speed);
+  const pct=Math.max(0,Math.min(1,fuel/CFG.tank));
+  const bar=document.getElementById('fuelBar'); bar.style.width=(pct*100)+'%';
+  bar.style.background = pct<0.15?'#d93a34':(pct<0.3?'#e8a33a':'#2eb35c');
+  document.getElementById('range').textContent=Math.round(rangeKm());
+}
+
+// контекстна кнопка (АЗС / церква)
+let ctxAction=null;
+function updateCtx(lat,lng){
+  const btn=document.getElementById('ctx');
+  // АЗС
+  let near=null;
+  for(const s of stations){ if(dist(lat,lng,s.lat,s.lng)<CFG.arrive){ near={type:'fuel',s}; break; } }
+  if(!near) for(const c of churchMarks){ if(dist(lat,lng,c.lat,c.lng)<CFG.arrive){ near={type:'church',c}; break; } }
+  if(near && car.speed<8){
+    if(near.type==='fuel'){ btn.textContent='⛽ Заправитись'; ctxAction=()=>openFuel(near.s); }
+    else{ const ready=churchCd<=0; btn.textContent=ready?'⛪ Зайти до храму':'⛪ Вже сьогодні'; ctxAction=ready?visitChurch:null; }
+    btn.style.display='block';
+  } else { btn.style.display='none'; ctxAction=null; }
+}
+function visitChurch(){ if(churchCd>0) return; money+=CFG.churchBonus; blessing=1; churchCd=CFG.churchCooldownSec;
+  toast(`🙏 +${CFG.churchBonus} грн · Благословення дороги (−15% пального)`); }
+
+function openFuel(s){ phase='fuel';
+  document.getElementById('fuelStation').textContent='АЗС '+s.name;
+  document.getElementById('fuelNow').textContent=fuel.toFixed(1);
+  document.getElementById('fuelMoney').textContent=Math.round(money);
+  document.getElementById('priceA95').textContent=s.a95.toFixed(2)+' грн/л';
+  document.getElementById('priceLPG').textContent=s.lpg.toFixed(2)+' грн/л';
+  document.getElementById('fuelPanel').classList.remove('hidden');
+  fuelPanel._s=s;
+}
+function doRefuel(kind){ const s=fuelPanel._s; const price = kind==='LPG'?s.lpg:s.a95;
+  const need=CFG.tank-fuel;
+  let liters, cost;
+  if(kind==='500'){ liters=Math.min(500/s.a95, need); cost=liters*s.a95; }
+  else { liters=need; cost=liters*price; }
+  if(cost>money){ liters=money/price; cost=money; }
+  money-=cost; fuel+=liters;
+  toast(`Залито ${liters.toFixed(1)} л на ${Math.round(cost)} грн`);
+  closeFuel();
+}
+function closeFuel(){ document.getElementById('fuelPanel').classList.add('hidden'); phase='play'; }
+const fuelPanel=document.getElementById('fuelPanel');
+
+// ================= ЦИКЛ =================
 function tick(now){
   requestAnimationFrame(tick);
-  if(state!=='play'){ lastT=now; return; }
-  let dt=(now-lastT)/1000; lastT=now; if(dt>0.05) dt=0.05;
-
-  // кермування
-  if(input.left)  car.heading -= TURN*dt;
-  if(input.right) car.heading += TURN*dt;
-  // швидкість
-  if(input.gas)        car.speed += ACCEL*dt;
-  else if(input.brake) car.speed -= BRAKE*dt;
-  else                 car.speed -= FRICTION*dt;
-  car.speed = Math.max(0, Math.min(MAX_SPEED, car.speed));
-
-  // рух (heading 0=північ)
-  const dist = car.speed*dt;
-  car.lat += (dist*Math.cos(car.heading))/M_PER_DEG_LAT;
-  car.lng += (dist*Math.sin(car.heading))/mPerDegLng(car.lat);
-  map.setView([car.lat,car.lng], ZOOM, {animate:false});
-  carEl.style.transform = `rotate(${car.heading}rad)`;
-
-  // ціль + компас
-  const t = nearestTarget();
-  if(t){
-    document.getElementById('targetName').textContent = t.cp.name;
-    document.getElementById('targetDist').textContent = Math.round(t.d)+' м';
-    const b = bearing(car.lat,car.lng,t.cp.lat,t.cp.lng); // карта північ-угору
-    document.getElementById('compass').style.transform = `rotate(${b}rad)`;
-    if(t.d < 45) collect(t.i);
-  }
-  // таймер
-  const el = Math.floor((now-startTime)/1000);
-  document.getElementById('timer').textContent = `${Math.floor(el/60)}:${String(el%60).padStart(2,'0')}`;
+  if(phase!=='play'){ lastT=now; return; }
+  let dt=(now-lastT)/1000; lastT=now; if(dt<=0) return; if(dt>0.05) dt=0.05;
+  step(dt);
 }
+function step(dt){
+  if(input.left)  car.heading-=CFG.turn*dt;
+  if(input.right) car.heading+=CFG.turn*dt;
+  if(fuel>0){
+    if(input.gas) car.speed+=CFG.accel*dt;
+    else if(input.brake) car.speed-=CFG.brake*dt;
+    else car.speed-=CFG.friction*dt;
+  } else { car.speed-=CFG.friction*dt; toastLowFuelMaybe(); }
+  car.speed=Math.max(0,Math.min(CFG.maxSpeed,car.speed));
+
+  const mps=car.speed/3.6, distM=mps*dt;
+  car.x+=distM*Math.sin(car.heading); car.y+=distM*Math.cos(car.heading);
+
+  // режим «лише по дорогах» — м'яко притягуємо до найближчої дороги + вирівнюємо курс
+  if(roadsOnly){
+    const r=nearestRoad(car.x,car.y);
+    if(r){
+      const k=Math.min(1,dt*10);                       // сильний «магніт» до осі дороги
+      car.x+=(r.px-car.x)*k; car.y+=(r.py-car.y)*k;
+      // вирівняти курс до напряму дороги (найближчий з двох)
+      let a=r.ang; let diff=((a-car.heading+Math.PI)%(2*Math.PI))-Math.PI;
+      if(Math.abs(diff)>Math.PI/2){ a+=Math.PI; diff=((a-car.heading+Math.PI)%(2*Math.PI))-Math.PI; }
+      const align=(input.left||input.right)?dt*1.5:dt*5;   // менше вирівнювання під час керма (щоб можна було повертати)
+      car.heading+=diff*Math.min(1,align);
+      streetName(r.name);
+    }
+  } else streetName('вільний режим');
+
+  // паливо / бонуси / кулдауни
+  if(car.speed>0.5) useFuel(distM); else if(input.gas) fuel=Math.max(0,fuel-CFG.idleLh/3600*dt);
+  if(churchCd>0) churchCd-=dt;
+  if(blessing>0) blessing-=distM/1000/10; // тане за 10 км
+
+  const p=fromXY(car.x,car.y);
+  map.setView([p.lat,p.lng],CFG.zoom,{animate:false});
+  carEl.style.transform=`rotate(${car.heading}rad)`;
+  checkJob(p.lat,p.lng);
+  updateCtx(p.lat,p.lng);
+  updateHUD();
+}
+let lowShown=false;
+function toastLowFuelMaybe(){ if(!lowShown && fuel<=0){ lowShown=true; toast('⛽ Пусто! Дійди пішки або заправся.'); } }
+let curStreet='';
+function streetName(n){ if(n!==curStreet){ curStreet=n; document.getElementById('street').firstElementChild.textContent=n||'—'; } }
 requestAnimationFrame(tick);
 
-function collect(i){
-  const cp = CHECKPOINTS[i];
-  cp.done = true; collected++;
-  markers[i].getElement().querySelector('.cp-icon').classList.add('done');
-  document.getElementById('score').textContent = `${collected}/${CHECKPOINTS.length}`;
-  showToast(`✅ ${cp.name}. ${cp.tip}`);
-  if(collected === CHECKPOINTS.length) win();
-}
-
-let toastT;
-function showToast(msg){
-  const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
-  clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'), 3200);
-}
-
-function startGame(){
-  CHECKPOINTS.forEach((cp,i)=>{ cp.done=false;
-    const el=markers[i].getElement(); if(el) el.querySelector('.cp-icon').classList.remove('done'); });
-  car={ lat:START[0], lng:START[1], heading:0, speed:0 };
-  collected=0; document.getElementById('score').textContent=`0/${CHECKPOINTS.length}`;
-  map.setView(START, ZOOM, {animate:false});
-  document.getElementById('startScreen').classList.add('hidden');
-  document.getElementById('winScreen').classList.add('hidden');
-  startTime=performance.now(); state='play';
-}
-function win(){
-  state='win';
-  const el=Math.floor((performance.now()-startTime)/1000);
-  const timeStr=`${Math.floor(el/60)} хв ${el%60} с`;
-  const best=Number(localStorage.getItem('obolon_best')||0);
-  let msg=`Твій час: <b>${timeStr}</b>.`;
-  if(!best || el<best){ localStorage.setItem('obolon_best', el); msg+=' 🏆 Новий рекорд!'; }
-  else msg+=` Найкращий: ${Math.floor(best/60)} хв ${best%60} с.`;
-  document.getElementById('winText').innerHTML=msg;
-  document.getElementById('winScreen').classList.remove('hidden');
-}
-
-// ---------- Ввід ----------
-function bind(id,key){
-  const b=document.getElementById(id);
-  b.addEventListener('pointerdown',e=>{ e.preventDefault(); try{ b.setPointerCapture(e.pointerId); }catch(_){} input[key]=true; });
+// ================= ВВІД =================
+function bind(id,key){ const b=document.getElementById(id);
+  b.addEventListener('pointerdown',e=>{ e.preventDefault(); try{b.setPointerCapture(e.pointerId);}catch(_){ } input[key]=true; });
   const off=e=>{ e.preventDefault(); input[key]=false; };
-  b.addEventListener('pointerup',off); b.addEventListener('pointercancel',off);
-}
+  b.addEventListener('pointerup',off); b.addEventListener('pointercancel',off); }
 bind('left','left'); bind('right','right'); bind('gas','gas'); bind('brake','brake');
+const km={ArrowLeft:'left',ArrowRight:'right',ArrowUp:'gas',ArrowDown:'brake',a:'left',d:'right',w:'gas',s:'brake',ф:'left',в:'right',ц:'gas',і:'brake'};
+addEventListener('keydown',e=>{ const k=km[e.key]; if(k){ e.preventDefault(); input[k]=true; }});
+addEventListener('keyup',e=>{ const k=km[e.key]; if(k){ e.preventDefault(); input[k]=false; }});
 
-const keymap={ ArrowLeft:'left', ArrowRight:'right', ArrowUp:'gas', ArrowDown:'brake',
-               a:'left', d:'right', w:'gas', s:'brake', ф:'left', в:'right', ц:'gas', ы:'brake', і:'brake' };
-addEventListener('keydown',e=>{ const k=keymap[e.key]; if(k){ e.preventDefault(); input[k]=true; }});
-addEventListener('keyup',  e=>{ const k=keymap[e.key]; if(k){ e.preventDefault(); input[k]=false; }});
+document.getElementById('modeBtn').addEventListener('click',()=>{ roadsOnly=!roadsOnly;
+  const b=document.getElementById('modeBtn'); b.classList.toggle('on',!roadsOnly);
+  b.innerHTML = roadsOnly?'🛣️<small>ДОРОГИ</small>':'🗺️<small>БУДЬ-ДЕ</small>';
+  toast(roadsOnly?'Режим: лише по дорогах':'Режим: їзда будь-де'); });
+document.getElementById('jobBtn').addEventListener('click',newJob);
+document.getElementById('ctx').addEventListener('click',()=>{ if(ctxAction) ctxAction(); });
+document.getElementById('fullA95').addEventListener('click',()=>doRefuel('A95'));
+document.getElementById('fullLPG').addEventListener('click',()=>doRefuel('LPG'));
+document.getElementById('fuel500').addEventListener('click',()=>doRefuel('500'));
+document.getElementById('fuelClose').addEventListener('click',closeFuel);
 
-document.getElementById('startBtn').addEventListener('click', startGame);
-document.getElementById('againBtn').addEventListener('click', startGame);
+// ================= СТАРТ =================
+function startGame(){ car={x:0,y:0,heading:0,speed:0}; fuel=CFG.startFuel; money=CFG.startMoney;
+  churchCd=0; blessing=0; job=null; lowShown=false;
+  document.getElementById('jobBtn').classList.remove('on');
+  document.getElementById('startScreen').classList.add('hidden');
+  updateHUD(); phase='play'; lastT=performance.now(); }
+document.getElementById('startBtn').addEventListener('click',startGame);
+addEventListener('resize',()=>map.invalidateSize()); setTimeout(()=>map.invalidateSize(),300);
 
-// перерахунок розмірів карти
-addEventListener('resize', ()=>map.invalidateSize());
-setTimeout(()=>map.invalidateSize(), 300);
+// ================= ЗАВАНТАЖЕННЯ ДАНИХ =================
+Promise.all([ fetch('data/roads.json').then(r=>r.json()), fetch('data/pois.json').then(r=>r.json()) ])
+ .then(([roads,pois])=>{ buildRoads(roads.roads); addPOIs(pois);
+   document.getElementById('loadNote').textContent=`Готово: ${segments.length} відрізків доріг, ${stations.length} АЗС, ${churchMarks.length} храмів`;
+ })
+ .catch(e=>{ document.getElementById('loadNote').textContent='Помилка завантаження даних: '+e; });
 </script>
 </body>
 </html>
