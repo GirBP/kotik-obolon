@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Котик за кермом — Оболонь</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+  :root{ --accent:#F5A623; --green:#2eb35c; --red:#d93a34; --ink:#1a1c20; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; height:100%; overflow:hidden; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:#0e1013; }
+  #map{ position:absolute; inset:0; z-index:1; background:#aadaff; }
+  /* прибрати керування картою — це «фон», по якому їдемо */
+  .leaflet-control,.leaflet-top,.leaflet-bottom{ display:none !important; }
+
+  /* Котик-машинка — завжди в центрі екрана */
+  #car{ position:absolute; left:50%; top:50%; z-index:5; width:44px; height:64px;
+        margin:-32px 0 0 -22px; transition:transform .05s linear; pointer-events:none;
+        filter:drop-shadow(0 3px 4px rgba(0,0,0,.35)); }
+
+  /* HUD */
+  #hud{ position:absolute; top:0; left:0; right:0; z-index:10; padding:10px;
+        display:flex; gap:8px; align-items:flex-start; pointer-events:none;
+        padding-top:calc(10px + env(safe-area-inset-top)); }
+  .chip{ background:rgba(20,22,26,.82); color:#fff; border-radius:14px; padding:8px 12px;
+         font-weight:700; font-size:14px; backdrop-filter:blur(6px); }
+  .chip small{ display:block; font-weight:500; font-size:11px; opacity:.7; }
+  #targetChip{ flex:1; display:flex; align-items:center; gap:10px; }
+  #compass{ width:34px; height:34px; flex:0 0 auto; transition:transform .1s linear; }
+
+  /* Керування */
+  #controls{ position:absolute; bottom:0; left:0; right:0; z-index:10;
+             display:flex; gap:12px; align-items:flex-end; padding:16px;
+             padding-bottom:calc(16px + env(safe-area-inset-bottom)); pointer-events:none; }
+  .btn{ pointer-events:auto; user-select:none; touch-action:none; border:none;
+        color:#fff; font-weight:800; border-radius:20px;
+        display:flex; flex-direction:column; align-items:center; justify-content:center;
+        box-shadow:0 4px 12px rgba(0,0,0,.3); transition:transform .08s, filter .08s; }
+  .btn:active{ transform:scale(.93); filter:brightness(1.1); }
+  .steer{ width:72px; height:84px; font-size:30px; background:rgba(20,22,26,.75); }
+  .pedal{ flex:1; height:84px; font-size:17px; }
+  #gas{ background:var(--green); } #brake{ background:var(--red); }
+  .pedal span{ font-size:24px; }
+
+  /* Оверлеї */
+  .overlay{ position:absolute; inset:0; z-index:30; display:flex; align-items:center; justify-content:center;
+            background:rgba(8,10,13,.72); backdrop-filter:blur(3px); padding:24px; }
+  .card{ background:#fff; color:var(--ink); border-radius:24px; padding:26px 24px; max-width:400px; width:100%;
+         text-align:center; box-shadow:0 20px 60px rgba(0,0,0,.4); }
+  .card h1{ margin:.2em 0; font-size:26px; }
+  .card p{ color:#555; font-size:15px; line-height:1.45; margin:.6em 0; }
+  .paw{ font-size:60px; }
+  .cta{ margin-top:14px; background:var(--accent); color:#3a2a05; border:none; border-radius:16px;
+        padding:15px 22px; font-size:18px; font-weight:800; width:100%; cursor:pointer; }
+  .cta:active{ transform:scale(.97); }
+  .legend{ text-align:left; background:#f4f5f7; border-radius:14px; padding:12px 14px; margin-top:12px; font-size:13px; color:#444; }
+  .legend b{ color:var(--ink); }
+  .hidden{ display:none !important; }
+
+  /* спливна ПДР-підказка */
+  #toast{ position:absolute; left:50%; top:64px; transform:translateX(-50%) translateY(-20px);
+          z-index:20; background:var(--accent); color:#3a2a05; font-weight:700; font-size:14px;
+          padding:12px 18px; border-radius:16px; max-width:88%; text-align:center; opacity:0;
+          transition:opacity .3s, transform .3s; box-shadow:0 8px 24px rgba(0,0,0,.3); pointer-events:none; }
+  #toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+  /* мітка локації на карті */
+  .cp-icon{ display:flex; align-items:center; justify-content:center; width:38px; height:38px;
+            background:#fff; border:3px solid var(--accent); border-radius:50%; font-size:20px;
+            box-shadow:0 3px 8px rgba(0,0,0,.3); }
+  .cp-icon.done{ border-color:var(--green); opacity:.55; }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<!-- Котик-машинка (вигляд згори) -->
+<svg id="car" viewBox="0 0 44 64">
+  <!-- вушка -->
+  <path d="M9 16 L4 3 L17 11 Z" fill="#d98a1e"/>
+  <path d="M35 16 L40 3 L27 11 Z" fill="#d98a1e"/>
+  <path d="M10 14 L7 6 L15 11 Z" fill="#f7b8c0"/>
+  <path d="M34 14 L37 6 L29 11 Z" fill="#f7b8c0"/>
+  <!-- кузов -->
+  <rect x="6" y="10" width="32" height="50" rx="13" fill="#F5A623"/>
+  <!-- лобове скло -->
+  <rect x="11" y="15" width="22" height="12" rx="5" fill="#bfe0f2"/>
+  <!-- очі -->
+  <circle cx="17" cy="21" r="2.4" fill="#1a1c20"/>
+  <circle cx="27" cy="21" r="2.4" fill="#1a1c20"/>
+  <!-- фари -->
+  <circle cx="12" cy="13" r="2.2" fill="#fff6c2"/>
+  <circle cx="32" cy="13" r="2.2" fill="#fff6c2"/>
+  <!-- колеса -->
+  <rect x="3" y="20" width="4" height="12" rx="2" fill="#222"/>
+  <rect x="37" y="20" width="4" height="12" rx="2" fill="#222"/>
+  <rect x="3" y="40" width="4" height="12" rx="2" fill="#222"/>
+  <rect x="37" y="40" width="4" height="12" rx="2" fill="#222"/>
+</svg>
+
+<div id="hud">
+  <div class="chip"><span id="score">0/8</span><small>локацій</small></div>
+  <div class="chip"><span id="timer">0:00</span><small>час</small></div>
+  <div class="chip" id="targetChip">
+    <svg id="compass" viewBox="0 0 34 34"><path d="M17 3 L24 20 L17 16 L10 20 Z" fill="#F5A623"/></svg>
+    <div><span id="targetName">—</span><small id="targetDist"></small></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<div id="controls">
+  <button class="btn steer" id="left">◀</button>
+  <button class="btn pedal" id="gas"><span>⛽</span>Газ</button>
+  <button class="btn pedal" id="brake">✋ Гальмо</button>
+  <button class="btn steer" id="right">▶</button>
+</div>
+
+<!-- Старт -->
+<div class="overlay" id="startScreen">
+  <div class="card">
+    <div class="paw">🐱🚗</div>
+    <h1>Котик за кермом</h1>
+    <p>Катайся <b>Оболонню</b> й об'їдь усі <b>8 локацій</b> Києва якнайшвидше. На кожній — маленька підказка з ПДР 😉</p>
+    <div class="legend">
+      <b>Керування:</b><br>
+      📱 Телефон — кнопки внизу (◀ ▶ повороти, Газ, Гальмо)<br>
+      💻 Комп'ютер — стрілки ← ↑ → ↓ (або W A S D)
+    </div>
+    <button class="cta" id="startBtn">Поїхали! 🚦</button>
+  </div>
+</div>
+
+<!-- Перемога -->
+<div class="overlay hidden" id="winScreen">
+  <div class="card">
+    <div class="paw">🏁🐱</div>
+    <h1>Усю Оболонь об'їхано!</h1>
+    <p id="winText"></p>
+    <button class="cta" id="againBtn">Ще раз 🔁</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ---------- Локації Оболоні (реальні координати) ----------
+const CHECKPOINTS = [
+  { name:"Метро «Оболонь»",        lat:50.50130, lng:30.49830, emoji:"🚇",
+    tip:"У населеному пункті — не більше 50 км/год!" },
+  { name:"Метро «Мінська»",        lat:50.51220, lng:30.49850, emoji:"🚇",
+    tip:"На «зебрі» завжди пропускай пішоходів." },
+  { name:"Метро «Героїв Дніпра»",  lat:50.52230, lng:30.49900, emoji:"🚇",
+    tip:"Червоне світло — стоп, навіть якщо поспішаєш." },
+  { name:"ТРЦ Dream Town",          lat:50.52360, lng:30.49720, emoji:"🛍️",
+    tip:"На парковці тримай малу швидкість — до 20 км/год." },
+  { name:"Озеро Опечень",           lat:50.51400, lng:30.50650, emoji:"🦆",
+    tip:"Пристебни ремінь безпеки — це рятує життя." },
+  { name:"Оболонська набережна",    lat:50.51150, lng:30.51600, emoji:"🌊",
+    tip:"Дальнє світло вимикай за 250 м до зустрічних." },
+  { name:"Парк «Наталка»",          lat:50.51880, lng:30.51920, emoji:"🌳",
+    tip:"У житловій зоні перевагу мають пішоходи." },
+  { name:"Оболонський проспект",    lat:50.50650, lng:30.49950, emoji:"🛣️",
+    tip:"Дотримуйся дистанції до авто попереду." },
+];
+
+// ---------- Карта ----------
+const START = [50.5085, 30.5030];
+const ZOOM = 16;
+const map = L.map('map', {
+  center: START, zoom: ZOOM, zoomControl:false, attributionControl:false,
+  dragging:false, scrollWheelZoom:false, doubleClickZoom:false, boxZoom:false,
+  keyboard:false, touchZoom:false, inertia:false, zoomSnap:0,
+});
+L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+  maxZoom: 20, subdomains:'abcd'
+}).addTo(map);
+
+// мітки локацій
+const markers = CHECKPOINTS.map(cp => {
+  const icon = L.divIcon({ className:'', html:`<div class="cp-icon">${cp.emoji}</div>`, iconSize:[38,38], iconAnchor:[19,19] });
+  return L.marker([cp.lat, cp.lng], { icon }).addTo(map);
+});
+
+// ---------- Стан гри ----------
+const carEl = document.getElementById('car');
+let state = 'menu';
+let car = { lat:START[0], lng:START[1], heading:0, speed:0 };  // heading: рад, 0=північ, за годинником
+let collected = 0, startTime = 0, lastT = 0;
+const input = { left:false, right:false, gas:false, brake:false };
+
+const MAX_SPEED = 24;     // м/с (~86 км/год)
+const ACCEL = 14;         // м/с²
+const BRAKE = 30;
+const FRICTION = 6;
+const TURN = 2.6;         // рад/с
+const M_PER_DEG_LAT = 111320;
+const mPerDegLng = lat => 111320 * Math.cos(lat * Math.PI/180);
+
+function nearestTarget(){
+  let best=null, bd=Infinity;
+  CHECKPOINTS.forEach((cp,i)=>{ if(cp.done) return;
+    const d = map.distance([car.lat,car.lng],[cp.lat,cp.lng]);
+    if(d<bd){ bd=d; best={cp,i,d}; }});
+  return best;
+}
+function bearing(fromLat,fromLng,toLat,toLng){
+  const dLat=(toLat-fromLat), dLng=(toLng-fromLng)*Math.cos(fromLat*Math.PI/180);
+  return Math.atan2(dLng, dLat); // 0=північ, за годинниковою
+}
+
+// ---------- Ігровий цикл ----------
+function tick(now){
+  requestAnimationFrame(tick);
+  if(state!=='play'){ lastT=now; return; }
+  let dt=(now-lastT)/1000; lastT=now; if(dt>0.05) dt=0.05;
+
+  // кермування
+  if(input.left)  car.heading -= TURN*dt;
+  if(input.right) car.heading += TURN*dt;
+  // швидкість
+  if(input.gas)        car.speed += ACCEL*dt;
+  else if(input.brake) car.speed -= BRAKE*dt;
+  else                 car.speed -= FRICTION*dt;
+  car.speed = Math.max(0, Math.min(MAX_SPEED, car.speed));
+
+  // рух (heading 0=північ)
+  const dist = car.speed*dt;
+  car.lat += (dist*Math.cos(car.heading))/M_PER_DEG_LAT;
+  car.lng += (dist*Math.sin(car.heading))/mPerDegLng(car.lat);
+  map.setView([car.lat,car.lng], ZOOM, {animate:false});
+  carEl.style.transform = `rotate(${car.heading}rad)`;
+
+  // ціль + компас
+  const t = nearestTarget();
+  if(t){
+    document.getElementById('targetName').textContent = t.cp.name;
+    document.getElementById('targetDist').textContent = Math.round(t.d)+' м';
+    const b = bearing(car.lat,car.lng,t.cp.lat,t.cp.lng); // карта північ-угору
+    document.getElementById('compass').style.transform = `rotate(${b}rad)`;
+    if(t.d < 45) collect(t.i);
+  }
+  // таймер
+  const el = Math.floor((now-startTime)/1000);
+  document.getElementById('timer').textContent = `${Math.floor(el/60)}:${String(el%60).padStart(2,'0')}`;
+}
+requestAnimationFrame(tick);
+
+function collect(i){
+  const cp = CHECKPOINTS[i];
+  cp.done = true; collected++;
+  markers[i].getElement().querySelector('.cp-icon').classList.add('done');
+  document.getElementById('score').textContent = `${collected}/${CHECKPOINTS.length}`;
+  showToast(`✅ ${cp.name}. ${cp.tip}`);
+  if(collected === CHECKPOINTS.length) win();
+}
+
+let toastT;
+function showToast(msg){
+  const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
+  clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'), 3200);
+}
+
+function startGame(){
+  CHECKPOINTS.forEach((cp,i)=>{ cp.done=false;
+    const el=markers[i].getElement(); if(el) el.querySelector('.cp-icon').classList.remove('done'); });
+  car={ lat:START[0], lng:START[1], heading:0, speed:0 };
+  collected=0; document.getElementById('score').textContent=`0/${CHECKPOINTS.length}`;
+  map.setView(START, ZOOM, {animate:false});
+  document.getElementById('startScreen').classList.add('hidden');
+  document.getElementById('winScreen').classList.add('hidden');
+  startTime=performance.now(); state='play';
+}
+function win(){
+  state='win';
+  const el=Math.floor((performance.now()-startTime)/1000);
+  const timeStr=`${Math.floor(el/60)} хв ${el%60} с`;
+  const best=Number(localStorage.getItem('obolon_best')||0);
+  let msg=`Твій час: <b>${timeStr}</b>.`;
+  if(!best || el<best){ localStorage.setItem('obolon_best', el); msg+=' 🏆 Новий рекорд!'; }
+  else msg+=` Найкращий: ${Math.floor(best/60)} хв ${best%60} с.`;
+  document.getElementById('winText').innerHTML=msg;
+  document.getElementById('winScreen').classList.remove('hidden');
+}
+
+// ---------- Ввід ----------
+function bind(id,key){
+  const b=document.getElementById(id);
+  const on=e=>{ e.preventDefault(); input[key]=true; };
+  const off=e=>{ e.preventDefault(); input[key]=false; };
+  b.addEventListener('pointerdown',on); b.addEventListener('pointerup',off);
+  b.addEventListener('pointerleave',off); b.addEventListener('pointercancel',off);
+}
+bind('left','left'); bind('right','right'); bind('gas','gas'); bind('brake','brake');
+
+const keymap={ ArrowLeft:'left', ArrowRight:'right', ArrowUp:'gas', ArrowDown:'brake',
+               a:'left', d:'right', w:'gas', s:'brake', ф:'left', в:'right', ц:'gas', ы:'brake', і:'brake' };
+addEventListener('keydown',e=>{ const k=keymap[e.key]; if(k){ e.preventDefault(); input[k]=true; }});
+addEventListener('keyup',  e=>{ const k=keymap[e.key]; if(k){ e.preventDefault(); input[k]=false; }});
+
+document.getElementById('startBtn').addEventListener('click', startGame);
+document.getElementById('againBtn').addEventListener('click', startGame);
+
+// перерахунок розмірів карти
+addEventListener('resize', ()=>map.invalidateSize());
+setTimeout(()=>map.invalidateSize(), 300);
+</script>
+</body>
+</html>
