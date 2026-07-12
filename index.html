@@ -155,6 +155,7 @@
   <button class="act" id="modeBtn" title="Режим руху">🛣️<small>ДОРОГИ</small></button>
   <button class="act" id="jobBtn" title="Замовлення">📦<small>РОБОТА</small></button>
   <button class="act" id="handBtn" title="Керування">✌️<small>2 РУКИ</small></button>
+  <button class="act hidden" id="spdBtn" title="Макс. швидкість"><b id="spdVal" style="font-size:20px">40</b><small>МАКС V</small></button>
 </div>
 
 <button id="ctx"></button>
@@ -323,7 +324,7 @@ let job=null; // {from,to,stage:'pickup'|'deliver',fromMk,toMk,dist}
 let jobMarker=null;
 const input={ left:false, right:false, gas:false, brake:false, clutch:false };
 let selectedMode='auto';
-let handedMode='two', steerTarget=0, steerActive=false, steerStartX=0;
+let handedMode='two', steerTarget=0, steerActive=false, steerStartX=0, cruiseSet=40;
 let segments=[], grid=new Map(), GRID=60;
 let fuelMarks=[], churchMarks=[], stations=[];
 let lastT=0;
@@ -480,9 +481,9 @@ function tick(now){
 }
 function step(dt){
   if(handedMode==='one'){
-    car.heading += steerTarget*CFG.turn*dt;                       // тягни-кермуй
-    if(car.engineRunning && fuel>0 && !input.brake && Math.abs(car.speed)<CFG.cruise) input.gas=true;
-    else if(!input.brake) input.gas=false;                        // автогаз до крейсерської
+    // кермуємо ◀▶, гальмуємо; авто саме розганяється до заданої макс. швидкості
+    if(car.engineRunning && fuel>0 && !input.brake && Math.abs(car.speed)<cruiseSet) input.gas=true;
+    else if(!input.brake) input.gas=false;
   }
   if(input.left)  car.heading-=CFG.turn*dt;
   if(input.right) car.heading+=CFG.turn*dt;
@@ -562,11 +563,13 @@ document.getElementById('jobBtn').addEventListener('click',newJob);
   const off=()=>{ steerActive=false; steerTarget=0; };
   z.addEventListener('pointerup',off); z.addEventListener('pointercancel',off); })();
 function applyHanded(){ const one=handedMode==='one';
-  document.getElementById('steerZone').classList.toggle('hidden', !one);
-  document.getElementById('steerHint').classList.toggle('hidden', !(one && phase==='play'));
-  document.getElementById('left').style.display=one?'none':'';
-  document.getElementById('right').style.display=one?'none':'';
-  document.getElementById('gas').style.display=one?'none':'';
+  document.getElementById('steerZone').classList.add('hidden');       // без перетягування
+  document.getElementById('steerHint').classList.add('hidden');
+  document.getElementById('left').style.display='';                   // стрілки лишаються — ними кермуємо
+  document.getElementById('right').style.display='';
+  document.getElementById('gas').style.display=one?'none':'';         // у 1 руку газ автоматичний — кнопки нема
+  document.getElementById('spdBtn').classList.toggle('hidden', !one);
+  document.getElementById('spdVal').textContent=cruiseSet;
   const hb=document.getElementById('handBtn'); hb.innerHTML=one?'🖐️<small>1 РУКА</small>':'✌️<small>2 РУКИ</small>'; hb.classList.toggle('on',one);
   if(one){ selectedMode='auto'; if(car&&'mode' in car) car.mode='auto';
     document.getElementById('modeAuto').classList.add('on'); document.getElementById('modeManual').classList.remove('on');
@@ -574,6 +577,9 @@ function applyHanded(){ const one=handedMode==='one';
 }
 window.applyHanded=applyHanded;
 document.getElementById('handBtn').addEventListener('click',()=>{ handedMode=handedMode==='one'?'two':'one'; applyHanded(); });
+document.getElementById('spdBtn').addEventListener('click',()=>{ const opts=[30,40,50,58];
+  cruiseSet=opts[(opts.indexOf(cruiseSet)+1)%opts.length]; document.getElementById('spdVal').textContent=cruiseSet;
+  toast('Макс. швидкість: '+cruiseSet+' км/год'); });
 document.getElementById('ctx').addEventListener('click',()=>{ if(ctxAction) ctxAction(); });
 document.getElementById('fullA95').addEventListener('click',()=>doRefuel('A95'));
 document.getElementById('fullLPG').addEventListener('click',()=>doRefuel('LPG'));
