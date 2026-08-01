@@ -228,11 +228,11 @@
 // ================= КОНФІГ =================
 const CFG = {
   zoom: 19, center: [50.5085, 30.5030],
-  tank: 50, startFuel: 16, startMoney: 3000,
+  tank: 50, startFuel: 5, startMoney: 900,
   consCity: 12.0,           // л/100км (місто, ігровий темп)
   idleLh: 1.1,              // л/год на холостому
   maxSpeed: 58, accel: 22, brake: 60, friction: 10, turn: 2.7, cruise: 42,
-  jobBase: 25, jobPerKm: 14,
+  jobBase: 40, jobPerKm: 20,
   churchBonus: 50, churchCooldownSec: 90,
   arrive: 22,              // м — радіус «прибуття»
 };
@@ -377,7 +377,9 @@ function addPOIs(pois){
 // ================= ЕКОНОМІКА / ПАЛИВО =================
 function rangeKm(){ return (fuel / CFG.consCity) * 100; }
 function useFuel(distM){
-  let rate=CFG.consCity; if(blessing>0) rate*=0.85;
+  let rate=CFG.consCity;
+  if(fuelType==='LPG') rate*=1.12;        // газ: дешевший, але витрата вища (+12%)
+  if(blessing>0) rate*=0.85;
   fuel=Math.max(0, fuel - (rate/100)*(distM/1000));
 }
 function dist(aLat,aLng,bLat,bLng){ return map.distance([aLat,aLng],[bLat,bLng]); }
@@ -466,7 +468,8 @@ function doRefuel(kind){ const s=fuelPanel._s; const price = kind==='LPG'?s.lpg:
   else { liters=need; cost=liters*price; }
   if(cost>money){ liters=money/price; cost=money; }
   money-=cost; fuel+=liters;
-  toast(`Залито ${liters.toFixed(1)} л на ${Math.round(cost)} грн`);
+  if(kind==='LPG'){ fuelType='LPG'; } else { fuelType='A95'; }
+  toast(`Залито ${liters.toFixed(1)} л ${kind==='LPG'?'газу':'А-95'} на ${Math.round(cost)} грн`);
   closeFuel();
 }
 function closeFuel(){ document.getElementById('fuelPanel').classList.add('hidden'); phase='play'; }
@@ -636,7 +639,9 @@ function renderSeqList(){ const items=SEQ.map((s,i)=>({s,i})).filter(o=>o.s.tap)
     return `<span class="it ${cls}">${o.s.short}</span>`; }).join(''); }
 function finishSequence(){ document.getElementById('seq').classList.add('hidden');
   car.engineRunning=true; phase='play'; lastT=performance.now(); window.applyHanded&&window.applyHanded();
-  toast('🚗 Поїхали! Ремінь пристебнуто, двигун працює.'); }
+  if(car.mode==='manual'){ car.gear=1;
+    toast('🔧 Механіка: тримай 🖐 Зчеплення, дай Газ — і плавно відпусти зчеплення. Інакше заглухне!'); }
+  else toast('🚗 Поїхали! Ремінь пристебнуто, двигун працює.'); }
 document.getElementById('startBtn').addEventListener('click', startSequence);
 document.getElementById('seqBtn').addEventListener('click', seqAction);
 addEventListener('resize',()=>map.invalidateSize()); setTimeout(()=>map.invalidateSize(),300);
