@@ -504,13 +504,13 @@ function closeYt(){ document.getElementById('ytFrame').src=''; document.getEleme
 document.getElementById('ytClose').addEventListener('click',()=>stopRadio());
 let AC=null;
 function ac(){ if(!AC){ const C=window.AudioContext||window.webkitAudioContext; AC=new C(); } if(AC.state==='suspended') AC.resume(); return AC; }
-function bell(freq,t0,dur,vol){ const a=ac(); const o=a.createOscillator(), g=a.createGain();
+function bell(freq,t0,dur,vol){ if(window.MUTED) return; const a=ac(); const o=a.createOscillator(), g=a.createGain();
   o.type='sine'; o.frequency.value=freq; o.connect(g); g.connect(a.destination);
   g.gain.setValueAtTime(vol,t0); g.gain.exponentialRampToValueAtTime(0.001,t0+dur);
   o.start(t0); o.stop(t0+dur); }
 function churchBells(){ const t=ac().currentTime+0.05; [523,392,330,392,523].forEach((f,i)=>bell(f,t+i*0.9,2.4,0.22)); }
 function sensJingle(){ const t=ac().currentTime+0.05; [660,880,990].forEach((f,i)=>bell(f,t+i*0.18,0.5,0.18)); }
-function speakLines(lines){
+function speakLines(lines){ if(window.MUTED) return true;
   if(!('speechSynthesis' in window)) return false;
   const vs=speechSynthesis.getVoices(); const uk=vs.find(v=>/^uk/i.test(v.lang));
   if(!uk) return false;
@@ -646,7 +646,7 @@ function checkJob(lat,lng){
   if(dist(lat,lng,tgt.lat,tgt.lng) < CFG.arrive){
     if(job.stage==='pickup'){ job.stage='deliver'; setJobMarker(job.to);
       toast(`Везіть до: ${job.to.name} (${job.fare} грн)`); }
-    else{ money+=job.fare; toast(`✅ Доставлено! +${job.fare} грн`); fmEvent('job');
+    else{ money+=job.fare; window.SAVE&&window.SAVE.addEarned(job.fare); toast(`✅ Доставлено! +${job.fare} грн`); fmEvent('job');
       if(jobMarker){ map.removeLayer(jobMarker); jobMarker=null; }
       job=null; document.getElementById('jobBtn').classList.remove('on'); }
   }
@@ -691,7 +691,7 @@ function updateCtx(lat,lng){
   } else { btn.style.display='none'; ctxAction=null; }
 }
 function visitChurch(){ if(churchCd>0) return; money+=CFG.churchBonus; blessing=1; churchCd=CFG.churchCooldownSec;
-  toast(`🙏 +${CFG.churchBonus} грн · Благословення дороги (−15% пального)`); fmEvent('church'); }
+  toast(`🙏 +${CFG.churchBonus} грн · Благословення дороги (−15% пального)`); fmEvent('church'); window.SAVE&&window.SAVE.save(); }
 
 function openFuel(s){ phase='fuel';
   document.getElementById('fuelStation').textContent='АЗС '+s.name;
@@ -711,7 +711,7 @@ function doRefuel(kind){ const s=fuelPanel._s; const price = kind==='LPG'?s.lpg:
   money-=cost; fuel+=liters;
   if(kind==='LPG'){ fuelType='LPG'; } else { fuelType='A95'; }
   toast(`Залито ${liters.toFixed(1)} л ${kind==='LPG'?'газу':'А-95'} на ${Math.round(cost)} грн`);
-  fmEvent('refuel');
+  fmEvent('refuel'); window.SAVE&&window.SAVE.save();
   closeFuel();
 }
 function closeFuel(){ document.getElementById('fuelPanel').classList.add('hidden'); phase='play'; }
@@ -739,6 +739,7 @@ function step(dt){
 
   const mps=car.speed/3.6, distM=mps*dt;
   car.x+=distM*Math.sin(car.heading); car.y+=distM*Math.cos(car.heading);
+  window.SAVE&&window.SAVE.addKm(Math.abs(distM)/1000);
 
   // режим «лише по дорогах» — м'яко притягуємо до найближчої дороги + вирівнюємо курс
   if(roadsOnly){
@@ -781,6 +782,7 @@ function step(dt){
   updateRadio(p.lat,p.lng);
   fmStep(dt);
   window.liveStep&&window.liveStep(dt);
+  window.TRACES&&window.TRACES.step(dt);
   updateHUD();
 }
 let lowShown=false;
@@ -901,7 +903,7 @@ function initGame(){ if(handedMode==='one') selectedMode='auto';
   document.getElementById('manualCtl').classList.toggle('hidden', selectedMode!=='manual');
   document.getElementById('gearChip').classList.toggle('hidden', selectedMode!=='manual');
   document.getElementById('jobBtn').classList.remove('on'); updateHUD(); }
-function startGame(){ initGame(); car.engineRunning=true; car.belt=true;   // швидкий старт (фолбек/тест)
+function startGame(){ initGame(); window.SAVE&&window.SAVE.applyRestore(); car.engineRunning=true; car.belt=true;   // швидкий старт (фолбек/тест)
   if(mpEnabled && !mp.on) mpStart();
   document.getElementById('startScreen').classList.add('hidden'); document.getElementById('seq').classList.add('hidden');
   phase='play'; lastT=performance.now(); window.applyHanded&&window.applyHanded(); }
@@ -930,7 +932,7 @@ function renderSeqList(){ const items=SEQ.map((s,i)=>({s,i})).filter(o=>o.s.tap)
   document.getElementById('seqList').innerHTML = items.map(o=>{
     const cls=o.i<seqIdx?'done':(o.i===seqIdx?'cur':'');
     return `<span class="it ${cls}">${o.s.short}</span>`; }).join(''); }
-function finishSequence(){ document.getElementById('seq').classList.add('hidden');
+function finishSequence(){ window.SAVE&&window.SAVE.applyRestore(); document.getElementById('seq').classList.add('hidden');
   car.engineRunning=true; phase='play'; lastT=performance.now(); window.applyHanded&&window.applyHanded();
   if(car.mode==='manual'){ car.gear=1;
     toast('🔧 Механіка: тримай 🖐 Зчеплення, дай Газ — і плавно відпусти зчеплення. Інакше заглухне!'); }
@@ -1568,7 +1570,912 @@ function fmUnduck(){
 
 
 // старт живих підсистем (Оболонь FM + Київський час)
-fmInit(); window.liveInit&&window.liveInit();
+
+// ================= 💾 SAVE + 🐾 СЛІДИ СУСІДІВ + ⚙️ НАЛАШТУВАННЯ (v0.6) =================
+// ============================================================
+// 💾 ЗБЕРЕЖЕННЯ ПРОГРЕСУ (SAVE)
+// Для «Котик за кермом» (Оболонь). Вставляється ІНЛАЙН у той самий
+// класичний <script>, що й основна гра — бачить її глобали
+// (money, fuel, fuelType, selectedMode, handedMode, roadsOnly, cruiseSet,
+// CFG, car, phase, toast, updateHUD, applyHanded) і нічого з них не
+// перевизначає. Присвоєння глобалам тут (money=…, fuel=…) міняють саме
+// ту `let`-змінну, що й решта гри, бо модуль живе в тому самому <script>.
+//
+// Контракт: window.SAVE = { load, applyRestore, save, addKm, addEarned,
+//           stats, wipe }
+//
+// Усе в try/catch: localStorage може кидати у приватному режимі —
+// тоді граємо без збереження, гра ніколи не падає через це.
+// ============================================================
+(function(){
+  'use strict';
+
+  var SAVE_KEY       = 'kotik_save_v1';
+  var SAVE_VERSION   = 1;
+  var SAVE_THROTTLE  = 2000;   // мс — не частіше ~1 раз/2с пишемо в localStorage
+  var AUTOSAVE_EVERY = 15000;  // мс — періодичне автозбереження
+
+  var FUEL_TYPES = { A95:1, LPG:1 };
+  var MODES      = { auto:1, manual:1 };
+  var HANDS      = { two:1, one:1 };
+
+  var saved       = null;   // внутрішній стан: { v, money, fuel, fuelType, selectedMode,
+                             //   handedMode, roadsOnly, cruiseSet, totalKm, totalEarned, sessions }
+  var hasSave     = false;  // чи існувало ВАЛІДНЕ збереження до load() (розрізняє «перший запуск»)
+  var lastSaveAt  = 0;      // мітка часу останнього фактичного запису в localStorage
+  var pendingSave = null;   // setTimeout id відкладеного запису (throttle)
+
+  function now(){ return (typeof performance!=='undefined' && performance.now) ? performance.now() : Date.now(); }
+  function isNum(v){ return typeof v==='number' && isFinite(v); }
+
+  // ---- валідація: битий/чужорідний JSON → null, ігноруємо, не падаємо ----
+  function validate(obj){
+    try{
+      if(!obj || typeof obj!=='object') return null;
+      if(obj.v!==SAVE_VERSION) return null;
+      if(!isNum(obj.money) || obj.money<0) return null;
+      if(!isNum(obj.fuel) || obj.fuel<0) return null;
+      if(typeof obj.fuelType!=='string' || !FUEL_TYPES[obj.fuelType]) return null;
+      if(typeof obj.selectedMode!=='string' || !MODES[obj.selectedMode]) return null;
+      if(typeof obj.handedMode!=='string' || !HANDS[obj.handedMode]) return null;
+      if(typeof obj.roadsOnly!=='boolean') return null;
+      if(!isNum(obj.cruiseSet) || obj.cruiseSet<=0) return null;
+      if(!isNum(obj.totalKm) || obj.totalKm<0) return null;
+      if(!isNum(obj.totalEarned) || obj.totalEarned<0) return null;
+      if(!isNum(obj.sessions) || obj.sessions<0) return null;
+      return {
+        v:SAVE_VERSION, money:obj.money, fuel:obj.fuel, fuelType:obj.fuelType,
+        selectedMode:obj.selectedMode, handedMode:obj.handedMode, roadsOnly:obj.roadsOnly,
+        cruiseSet:obj.cruiseSet, totalKm:obj.totalKm, totalEarned:obj.totalEarned,
+        sessions:obj.sessions
+      };
+    }catch(_){ return null; }
+  }
+
+  function readRaw(){
+    try{
+      var raw = localStorage.getItem(SAVE_KEY);
+      if(!raw) return null;
+      return validate(JSON.parse(raw));
+    }catch(_){ return null; } // битий JSON / localStorage недоступний → як «нема збереження»
+  }
+  function writeRaw(obj){
+    try{ localStorage.setItem(SAVE_KEY, JSON.stringify(obj)); return true; }
+    catch(_){ return false; } // приватний режим і т.п. → мовчки не зберігаємо
+  }
+
+  // ---- зібрати поточний стан гри + вже накопичену статистику ----
+  function collectCurrent(){
+    var stat = saved || {};
+    return {
+      v:SAVE_VERSION,
+      money: isNum(money) ? money : CFG.startMoney,
+      fuel: isNum(fuel) ? fuel : CFG.startFuel,
+      fuelType: (fuelType==='LPG') ? 'LPG' : 'A95',
+      selectedMode: (selectedMode==='manual') ? 'manual' : 'auto',
+      handedMode: (handedMode==='one') ? 'one' : 'two',
+      roadsOnly: !!roadsOnly,
+      cruiseSet: isNum(cruiseSet) ? cruiseSet : 40,
+      totalKm: isNum(stat.totalKm) ? stat.totalKm : 0,
+      totalEarned: isNum(stat.totalEarned) ? stat.totalEarned : 0,
+      sessions: isNum(stat.sessions) ? stat.sessions : 0
+    };
+  }
+
+  // негайний фактичний запис (без throttle) — для autosave-подій, де відкладати не варто
+  function saveNow(){
+    try{
+      var obj = collectCurrent();
+      if(writeRaw(obj)) saved = obj;
+      lastSaveAt = now();
+    }catch(_){ }
+  }
+
+  // публічний save(): throttle ~1 раз/2с, щоб часті виклики (кожен кадр із addKm) не гальмували
+  function save(){
+    try{
+      clearTimeout(pendingSave);
+      var elapsed = now() - lastSaveAt;
+      if(elapsed >= SAVE_THROTTLE){ saveNow(); }
+      else { pendingSave = setTimeout(saveNow, SAVE_THROTTLE - elapsed); }
+    }catch(_){ }
+  }
+
+  // ---- завантаження (виклик один раз, до старту гри) ----
+  function load(){
+    try{
+      var existing = readRaw();
+      hasSave = !!existing;
+      saved = existing || {
+        v:SAVE_VERSION, money:CFG.startMoney, fuel:CFG.startFuel, fuelType:'A95',
+        selectedMode:'auto', handedMode:'two', roadsOnly:true, cruiseSet:40,
+        totalKm:0, totalEarned:0, sessions:0
+      };
+      saved.sessions = (isNum(saved.sessions) ? saved.sessions : 0) + 1;
+      writeRaw(saved);
+      lastSaveAt = now();
+    }catch(_){ }
+  }
+
+  // ---- застосувати збережений прогрес до глобалів гри ----
+  function applyRestore(){
+    try{
+      if(!hasSave || !saved) return; // нема збереження → перший запуск, лишаємо дефолти initGame()
+      money = isNum(saved.money) ? saved.money : money;
+      fuel = isNum(saved.fuel) ? saved.fuel : fuel;
+      if(fuel > CFG.tank) fuel = CFG.tank;     // захист від битих/старих значень понад бак
+      if(fuel < 2) fuel = 2;                    // захист від застрягання: завжди можна доїхати до АЗС
+      fuelType = (saved.fuelType==='LPG') ? 'LPG' : 'A95';
+      selectedMode = (saved.selectedMode==='manual') ? 'manual' : 'auto';
+      handedMode = (saved.handedMode==='one') ? 'one' : 'two';
+      roadsOnly = !!saved.roadsOnly;
+      cruiseSet = isNum(saved.cruiseSet) ? saved.cruiseSet : cruiseSet;
+      if(typeof updateHUD==='function') updateHUD();
+    }catch(_){ }
+  }
+
+  // ---- накопичувальна статистика ----
+  function addKm(km){
+    try{
+      if(!isNum(km) || km<=0) return;
+      if(!saved) saved = collectCurrent();
+      saved.totalKm = (isNum(saved.totalKm) ? saved.totalKm : 0) + km;
+      save();
+    }catch(_){ }
+  }
+  function addEarned(grn){
+    try{
+      if(!isNum(grn) || grn<=0) return;
+      if(!saved) saved = collectCurrent();
+      saved.totalEarned = (isNum(saved.totalEarned) ? saved.totalEarned : 0) + grn;
+      save();
+    }catch(_){ }
+  }
+
+  // ---- для панелі налаштувань ----
+  function stats(){
+    try{
+      var s = saved || {};
+      return {
+        totalKm: isNum(s.totalKm) ? s.totalKm : 0,
+        totalEarned: isNum(s.totalEarned) ? s.totalEarned : 0,
+        sessions: isNum(s.sessions) ? s.sessions : 0,
+        money: isNum(money) ? Math.round(money) : 0
+      };
+    }catch(_){ return { totalKm:0, totalEarned:0, sessions:0, money:0 }; }
+  }
+
+  // ---- «почати заново»: стерти збереження, скинути економіку до дефолтів CFG ----
+  function wipe(){
+    try{
+      try{ localStorage.removeItem(SAVE_KEY); }catch(_){ }
+      money = CFG.startMoney; fuel = CFG.startFuel; fuelType = 'A95';
+      saved = null; hasSave = false;
+      saveNow(); // одразу пишемо чисте збереження (нульова статистика), щоб стара не ожила
+      if(typeof updateHUD==='function') updateHUD();
+      if(typeof toast==='function') toast('Прогрес скинуто');
+    }catch(_){ }
+  }
+
+  // ---- автозбереження: не покладаємось лише на явні виклики з ігрових подій ----
+  try{
+    document.addEventListener('visibilitychange', function(){
+      try{ if(document.visibilityState==='hidden') saveNow(); }catch(_){ }
+    });
+  }catch(_){ }
+  try{
+    addEventListener('pagehide', function(){ try{ saveNow(); }catch(_){ } });
+  }catch(_){ }
+  try{
+    setInterval(function(){ try{ saveNow(); }catch(_){ } }, AUTOSAVE_EVERY);
+  }catch(_){ }
+
+  window.SAVE = { load:load, applyRestore:applyRestore, save:save, addKm:addKm,
+                  addEarned:addEarned, stats:stats, wipe:wipe };
+})();
+
+
+// ============================================================
+// «Сліди сусідів» — теплий соціальний шар (v0.6)
+// Для «Котик за кермом» (Оболонь). Вставляється ІНЛАЙН у той самий
+// класичний <script>, що й основна гра — бачить її глобали й нічого
+// з них не перевизначає:
+//   map (Leaflet), car{x,y,heading,speed,...}, phase ('play' під час їзди),
+//   money (let), fuel (let), toXY/fromXY, dist(aLat,aLng,bLat,bLng),
+//   toast(msg), updateHUD(), ac(), bell(freq,t0,dur,vol),
+//   stations[], mp{nick,...}, MP_BROKERS[], window.mqtt, poiIcon(cls,emoji),
+//   DOM: #actions, #hud
+//
+// Інші гравці присутні в районі не машинами, а слідами доброти:
+// кожен слід — окремий retained MQTT-топік kotikobolon/traces/<id>.
+// Новий клієнт при підписці на kotikobolon/traces/# одразу отримує
+// всі збережені сліди (це і є вся «мережа» — без сервера).
+// Порожній payload у retained-топіку = слід видалено.
+//
+// Контракт:
+//   window.TRACES.init()        — одноразово при завантаженні (готує
+//                                  кнопку/DOM/стан; MQTT ще НЕ підключає)
+//   window.TRACES.step(dt)      — виклик щокадру із step(dt) під час
+//                                  phase==='play' (перший виклик — тригер
+//                                  підключення до MQTT)
+//   window.TRACES.setEnabled(b) — увімк/вимк фічу (persist у localStorage)
+//   window.TRACES.enabled       — поточний прапорець (bool)
+//   window.TRACES.leaveMenu()   — примусово закрити меню вибору сліду
+// ============================================================
+(function(){
+  'use strict';
+
+  // ---------- ключі localStorage ----------
+  var LS_ON            = 'kotik_traces_on';        // '1' | '0'
+  var LS_DAY            = 'kotik_traces_day';       // {date:'YYYY-M-D', count:N}
+  var LS_MINE           = 'kotik_traces_mine';      // {id: expMs, ...} — власні сліди
+  var LS_COFFEE_CLAIMED = 'kotik_coffee_claimed';   // [id, id, ...]
+
+  var TOPIC_BASE = 'kotikobolon/traces/';
+  var TOPIC_WILD = 'kotikobolon/traces/#';
+
+  var DAY_MS = 24*3600*1000;
+
+  // ---------- типи слідів: ГОТОВІ фрази, гравець лише обирає ----------
+  var TYPES = {
+    beauty: {
+      emoji:'📍', label:'Краса', exp: 7*DAY_MS,
+      phrases:['Звідси гарний захід 🌇','Тут тихо і добре','Гарний краєвид на Дніпро','Улюблене місце району']
+    },
+    warn: {
+      emoji:'⚠️', label:'Обережно', exp: 7*DAY_MS,
+      phrases:['Обережно, яма','Тут часто пішоходи','Слизько після дощу','Уважно — діти']
+    },
+    coffee: {
+      emoji:'☕', label:'Підвішена кава', exp: 2*DAY_MS, cost:40,
+      phrases:['Гарного дня, котику ☕','Ти впораєшся',"З любов'ю від сусіда"]
+    },
+    hello: {
+      emoji:'📣', label:'Привіт (гудок)', exp: 12*3600*1000,
+      phrases:[]
+    }
+  };
+
+  var STATION_NEAR_R = 30;   // м — АЗС поруч, щоб лишити каву
+  var COFFEE_CLAIM_R = 25;   // м — до чужої кави, щоб забрати
+  var HELLO_HEAR_R   = 30;   // м — до чужого привіту, щоб почути гудок
+  var SLOW_SPEED     = 8;    // км/год — «стоїть» (як у updateCtx)
+  var DAILY_MAX      = 5;
+  var COOLDOWN_MS    = 10000;
+  var PROX_EVERY_S   = 0.25; // як часто перевіряти близькість (не щокадру)
+
+  // ---------- приватний стан модуля ----------
+  var myClientId   = 'ktr_' + Math.random().toString(36).slice(2,10);
+  var mqttClient    = null;
+  var brokerIdx     = 0;
+  var mqttUnavailable = false;
+
+  var tracesById    = new Map(); // id -> {data, marker, mine, lat, lng}
+  var mineMap       = {};        // id -> expMs (власні сліди; переживає перезавантаження)
+  var claimedSet    = new Set(); // id забраних кав
+  var heardHello    = new Set(); // id привітів, почутих ЦІЄЇ сесії
+
+  var layer         = null;      // L.layerGroup з усіма маркерами слідів
+  var elBtn         = null, elMenu = null, elList = null, elClaim = null;
+  var menuView       = 'root';
+  var nearCoffeeId   = null;
+  var lastCreateAt   = 0;
+  var proxAccum      = 0;
+
+  // ---------- дрібні хелпери ----------
+  function toastSafe(msg){ try{ if(typeof toast==='function') toast(msg); }catch(e){} }
+
+  function loadJSON(key, fallback){
+    try{ var raw=localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; }
+    catch(e){ return fallback; }
+  }
+  function saveJSON(key, val){ try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){} }
+
+  function localDateKey(){
+    var d=new Date();
+    return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate();
+  }
+
+  function getNick(){
+    try{ if(typeof mp!=='undefined' && mp && mp.nick) return String(mp.nick).slice(0,12); }catch(e){}
+    try{ var n=localStorage.getItem('mpNick'); if(n) return String(n).slice(0,12); }catch(e){}
+    return 'Котик';
+  }
+
+  function nearAnyStation(){
+    try{
+      if(typeof stations==='undefined' || !stations || !stations.length) return false;
+      var p=fromXY(car.x,car.y);
+      for(var i=0;i<stations.length;i++){
+        var s=stations[i];
+        if(dist(p.lat,p.lng,s.lat,s.lng) < STATION_NEAR_R) return true;
+      }
+    }catch(e){}
+    return false;
+  }
+
+  function newTraceId(){
+    return 'tr'+Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+  }
+
+  // ---------- «власні» сліди (щоб інакше показувати й вміти прибрати прострочені) ----------
+  function loadMine(){
+    var obj = loadJSON(LS_MINE, {});
+    if(!obj || typeof obj!=='object') obj={};
+    return obj;
+  }
+  function saveMine(){ saveJSON(LS_MINE, mineMap); }
+  function markMine(id, exp){ try{ mineMap[id]=exp; saveMine(); }catch(e){} }
+  function isMine(id){ return !!(mineMap && Object.prototype.hasOwnProperty.call(mineMap,id)); }
+
+  // ---------- забрані кави (щоб не забрати двічі) ----------
+  function loadClaimed(){
+    var arr = loadJSON(LS_COFFEE_CLAIMED, []);
+    if(!Array.isArray(arr)) arr=[];
+    return new Set(arr);
+  }
+  function saveClaimed(){ try{ saveJSON(LS_COFFEE_CLAIMED, Array.from(claimedSet)); }catch(e){} }
+  function isCoffeeClaimed(id){ return claimedSet.has(id); }
+  function markCoffeeClaimed(id){ claimedSet.add(id); saveClaimed(); }
+
+  // ---------- антиспам: ≤5 власних слідів/добу + кулдаун ~10с ----------
+  function canCreateToday(){
+    var day = loadJSON(LS_DAY, {date:'',count:0});
+    return day.date !== localDateKey() || day.count < DAILY_MAX;
+  }
+  function bumpDailyCounter(){
+    var day = loadJSON(LS_DAY, {date:'',count:0});
+    var key = localDateKey();
+    if(day.date !== key) day = {date:key, count:0};
+    day.count++;
+    saveJSON(LS_DAY, day);
+  }
+
+  // ---------- звук: тихий клаксон-«привіт» ----------
+  function playHorn(){
+    try{
+      var t0 = ac().currentTime;
+      bell(520, t0,      0.14, 0.14);
+      bell(390, t0+0.10, 0.18, 0.14);
+    }catch(e){}
+  }
+
+  // ================= MQTT =================
+  function connectMqtt(){
+    try{
+      var url = MP_BROKERS[brokerIdx % MP_BROKERS.length];
+      mqttClient = mqtt.connect(url, { clientId:myClientId, keepalive:30, connectTimeout:6000 });
+    }catch(e){
+      mqttClient=null;
+      brokerIdx++;
+      if(brokerIdx < MP_BROKERS.length) connectMqtt();
+      else { mqttUnavailable=true; applyEnabledVisual(); }
+      return;
+    }
+    try{
+      mqttClient.on('connect', function(){
+        try{ mqttClient.subscribe(TOPIC_WILD); }catch(e){}
+      });
+      mqttClient.on('message', function(topic, payload){
+        try{ handleIncoming(topic, payload); }catch(e){}
+      });
+      mqttClient.on('error', function(){
+        try{ mqttClient.end(true); }catch(e){}
+        mqttClient=null;
+        brokerIdx++;
+        if(brokerIdx < MP_BROKERS.length && window.TRACES.enabled){ connectMqtt(); }
+        else { mqttUnavailable=true; applyEnabledVisual(); }
+      });
+    }catch(e){ mqttClient=null; mqttUnavailable=true; applyEnabledVisual(); }
+  }
+
+  function disconnectMqtt(){
+    try{ if(mqttClient) mqttClient.end(true); }catch(e){}
+    mqttClient=null;
+    try{
+      tracesById.forEach(function(t){ try{ layer.removeLayer(t.marker); }catch(e){} });
+    }catch(e){}
+    tracesById.clear();
+    nearCoffeeId=null;
+  }
+
+  function ensureConnected(){
+    try{
+      if(!window.TRACES.enabled || mqttUnavailable || mqttClient) return;
+      if(typeof phase==='undefined' || phase!=='play') return;
+      if(!window.mqtt){ mqttUnavailable=true; applyEnabledVisual(); return; }
+      connectMqtt();
+    }catch(e){}
+  }
+
+  function handleIncoming(topic, payloadBuf){
+    if(typeof topic!=='string' || topic.indexOf(TOPIC_BASE)!==0) return;
+    var id = topic.slice(TOPIC_BASE.length);
+    if(!id) return;
+    var raw = payloadBuf ? payloadBuf.toString() : '';
+    if(!raw){ removeTraceMarker(id); tracesById.delete(id); return; }
+    var d;
+    try{ d=JSON.parse(raw); }catch(e){ return; }
+    if(!d || !d.id || !TYPES[d.type] || typeof d.x!=='number' || typeof d.y!=='number') return;
+    if(d.exp && Date.now() > d.exp){
+      removeTraceMarker(id); tracesById.delete(id);
+      if(isMine(id)) clearOwnTrace(id);
+      return;
+    }
+    upsertTrace(id, d);
+  }
+
+  function clearOwnTrace(id){
+    try{ if(mqttClient && mqttClient.connected) mqttClient.publish(TOPIC_BASE+id, '', {retain:true}); }catch(e){}
+    try{ delete mineMap[id]; saveMine(); }catch(e){}
+  }
+
+  function pruneOwnExpired(){
+    var now=Date.now(), changed=false;
+    for(var id in mineMap){
+      if(!Object.prototype.hasOwnProperty.call(mineMap,id)) continue;
+      if(now > mineMap[id]){
+        if(tracesById.has(id)){
+          removeTraceMarker(id); tracesById.delete(id);
+          try{ if(mqttClient && mqttClient.connected) mqttClient.publish(TOPIC_BASE+id, '', {retain:true}); }catch(e){}
+        }
+        delete mineMap[id]; changed=true;
+      }
+    }
+    if(changed) saveMine();
+  }
+
+  // ================= маркери на карті =================
+  function upsertTrace(id, d){
+    var typeDef = TYPES[d.type]; if(!typeDef) return;
+    var mine = isMine(id);
+    var p; try{ p=fromXY(d.x,d.y); }catch(e){ return; }
+    var existing = tracesById.get(id);
+    if(existing){
+      existing.data=d; existing.lat=p.lat; existing.lng=p.lng;
+      try{ existing.marker.setLatLng([p.lat,p.lng]); }catch(e){}
+      return;
+    }
+    var cls = 'trace-'+d.type + (mine ? ' trace-mine' : '');
+    var marker;
+    try{ marker = L.marker([p.lat,p.lng], {icon:poiIcon(cls, typeDef.emoji)}).addTo(layer); }
+    catch(e){ return; }
+    try{
+      marker.on('click', function(){
+        try{
+          var who = mine ? 'Твій слід' : (d.nick || 'Сусід');
+          var text = d.type==='hello' ? (who + (mine ? ' (привіт)' : ' тут проїжджав')) :
+                     (d.msg ? (who+': «'+d.msg+'»') : who);
+          toastSafe(typeDef.emoji+' '+text);
+        }catch(e){}
+      });
+    }catch(e){}
+    tracesById.set(id, {data:d, marker:marker, mine:mine, lat:p.lat, lng:p.lng});
+  }
+
+  function removeTraceMarker(id){
+    var t=tracesById.get(id);
+    if(t && t.marker){ try{ layer.removeLayer(t.marker); }catch(e){} }
+  }
+
+  // ================= створення нового сліду =================
+  function createTrace(type, msgText){
+    try{
+      if(!window.TRACES.enabled || mqttUnavailable) return false;
+      var typeDef = TYPES[type]; if(!typeDef) return false;
+      var now = Date.now();
+      if(now - lastCreateAt < COOLDOWN_MS){ toastSafe('🐾 Зачекай трохи перед новим слідом'); return false; }
+      if(!canCreateToday()){ toastSafe('🐾 На сьогодні слідів досить — повертайся завтра'); return false; }
+      if(type==='coffee'){
+        if(typeof money!=='number' || money < typeDef.cost){ toastSafe('☕ Не вистачає грошей на каву (40 грн)'); return false; }
+        if(!nearAnyStation()){ toastSafe('☕ Каву можна лишити лише біля АЗС'); return false; }
+      }
+      if(!mqttClient || !mqttClient.connected){ toastSafe('🐾 Немає звʼязку — слід не надіслано'); return false; }
+      var id = newTraceId();
+      var exp = now + typeDef.exp;
+      var payload = { id:id, type:type, msg: msgText||'', nick:getNick(),
+                       x:+car.x.toFixed(1), y:+car.y.toFixed(1), t:now, exp:exp };
+      try{ mqttClient.publish(TOPIC_BASE+id, JSON.stringify(payload), {retain:true, qos:0}); }
+      catch(e){ toastSafe('🐾 Не вдалось надіслати слід'); return false; }
+      if(type==='coffee'){ try{ money -= typeDef.cost; updateHUD(); }catch(e){} }
+      lastCreateAt = now;
+      bumpDailyCounter();
+      markMine(id, exp);
+      upsertTrace(id, payload);
+      return true;
+    }catch(e){ return false; }
+  }
+
+  // ================= близькість: кава-забрати / гудок-привіт =================
+  function checkProximity(){
+    try{
+      var p = fromXY(car.x, car.y);
+      var slow = Math.abs(car.speed) < SLOW_SPEED;
+      var bestId=null, bestD=Infinity;
+      tracesById.forEach(function(t, id){
+        var d=t.data;
+        if(d.type==='coffee' && !t.mine && !isCoffeeClaimed(id) && slow){
+          var dc = dist(p.lat,p.lng,t.lat,t.lng);
+          if(dc < COFFEE_CLAIM_R && dc < bestD){ bestD=dc; bestId=id; }
+        }
+        if(d.type==='hello' && !t.mine && !heardHello.has(id)){
+          var dh = dist(p.lat,p.lng,t.lat,t.lng);
+          if(dh < HELLO_HEAR_R){
+            heardHello.add(id);
+            playHorn();
+            toastSafe('🐾 '+(d.nick||'Сусід')+' передав тут привіт');
+          }
+        }
+      });
+      nearCoffeeId = bestId;
+      updateClaimButtonVisibility();
+    }catch(e){}
+  }
+
+  function doClaimCoffee(){
+    try{
+      var id = nearCoffeeId; if(!id) return;
+      if(isCoffeeClaimed(id)){ nearCoffeeId=null; updateClaimButtonVisibility(); return; }
+      var t = tracesById.get(id);
+      if(!t){ nearCoffeeId=null; updateClaimButtonVisibility(); return; }
+      var d = t.data;
+      markCoffeeClaimed(id);
+      if(typeof money==='number'){ money += 40; try{ updateHUD(); }catch(e){} }
+      toastSafe('☕ Кава забрана!'+(d.msg ? (' «'+d.msg+'»') : '')+' +40 грн');
+      removeTraceMarker(id); tracesById.delete(id);
+      try{ if(mqttClient && mqttClient.connected) mqttClient.publish(TOPIC_BASE+id, '', {retain:true}); }catch(e){}
+      nearCoffeeId=null;
+      updateClaimButtonVisibility();
+    }catch(e){}
+  }
+
+  function updateClaimButtonVisibility(){
+    try{
+      if(!elClaim) return;
+      var show = window.TRACES.enabled && !!nearCoffeeId &&
+                 (typeof phase==='undefined' || phase==='play');
+      elClaim.style.display = show ? 'block' : 'none';
+    }catch(e){}
+  }
+
+  // ================= UI: кнопка + меню вибору сліду =================
+  function injectStyles(){
+    if(document.getElementById('tracesStyles')) return;
+    var css =
+      '#trClaim{position:absolute;left:50%;bottom:322px;transform:translateX(-50%);z-index:12;pointer-events:auto;'+
+        'background:#c98a2e;color:#fff;font-weight:800;font-size:14px;padding:11px 18px;border:none;border-radius:16px;'+
+        'box-shadow:0 6px 18px rgba(0,0,0,.35);display:none;}'+
+      '#trClaim:active{transform:translateX(-50%) scale(.95);}'+
+      '#trList .trOpt:disabled{opacity:.45;}'+
+      '.poi.trace-beauty{background:#2b9d6b;}'+
+      '.poi.trace-warn{background:#d97b1f;}'+
+      '.poi.trace-coffee{background:#a9662c;}'+
+      '.poi.trace-hello{background:#3a7fd9;}'+
+      '.poi.trace-mine{opacity:.72;filter:saturate(.75);'+
+        'box-shadow:0 0 0 2px rgba(255,255,255,.55),0 2px 5px rgba(0,0,0,.35);}';
+    var styleEl=document.createElement('style');
+    styleEl.id='tracesStyles';
+    styleEl.textContent=css;
+    document.head.appendChild(styleEl);
+  }
+
+  function ensureDom(){
+    injectStyles();
+
+    elBtn = document.getElementById('traceBtn');
+    if(!elBtn){
+      elBtn = document.createElement('button');
+      elBtn.className='act'; elBtn.id='traceBtn'; elBtn.title='Слід сусіда';
+      elBtn.innerHTML='🐾<small>СЛІД</small>';
+      var actions=document.getElementById('actions');
+      if(actions) actions.appendChild(elBtn); else document.body.appendChild(elBtn);
+      elBtn.addEventListener('click', openMenu);
+    }
+
+    elMenu = document.getElementById('trOverlay');
+    if(!elMenu){
+      elMenu = document.createElement('div');
+      elMenu.id='trOverlay'; elMenu.className='overlay hidden';
+      elMenu.innerHTML =
+        '<div class="card">'+
+          '<div class="paw">🐾</div>'+
+          '<h1>Слід сусіда</h1>'+
+          '<p>Тепла присутність — без токсу. Обери, що лишити тут.</p>'+
+          '<div id="trList"></div>'+
+          '<button class="cta sec" id="trClose" style="margin-top:8px;">Закрити</button>'+
+        '</div>';
+      document.body.appendChild(elMenu);
+      elMenu.addEventListener('click', function(e){ if(e.target===elMenu) closeMenu(); });
+      var closeBtn=document.getElementById('trClose');
+      if(closeBtn) closeBtn.addEventListener('click', closeMenu);
+    }
+    elList = document.getElementById('trList');
+
+    elClaim = document.getElementById('trClaim');
+    if(!elClaim){
+      elClaim = document.createElement('button');
+      elClaim.id='trClaim'; elClaim.textContent='☕ Забрати каву';
+      document.body.appendChild(elClaim);
+      elClaim.addEventListener('click', doClaimCoffee);
+    }
+
+    if(!layer){ try{ layer = L.layerGroup(); }catch(e){} }
+  }
+
+  function trOptHtml(key,label,disabled){
+    return '<button class="cta sec trOpt" data-k="'+key+'" style="margin-top:8px;"'+(disabled?' disabled':'')+'>'+label+'</button>';
+  }
+
+  function renderRoot(){
+    menuView='root';
+    if(!elList) return;
+    var parts=[];
+    parts.push(trOptHtml('beauty', TYPES.beauty.emoji+' '+TYPES.beauty.label, false));
+    parts.push(trOptHtml('warn',   TYPES.warn.emoji+' '+TYPES.warn.label, false));
+    var canLeaveCoffee = nearAnyStation();
+    var haveMoney = (typeof money==='number') && money >= TYPES.coffee.cost;
+    if(canLeaveCoffee){
+      var lbl = TYPES.coffee.emoji+' '+TYPES.coffee.label+' — '+TYPES.coffee.cost+' грн'+(haveMoney?'':' (не вистачає)');
+      parts.push(trOptHtml('coffee', lbl, !haveMoney));
+    } else {
+      parts.push('<div class="legend">'+TYPES.coffee.emoji+' Підвішену каву можна лишити лише біля АЗС</div>');
+    }
+    parts.push(trOptHtml('hello', TYPES.hello.emoji+' '+TYPES.hello.label, false));
+    elList.innerHTML = parts.join('');
+
+    var opts = elList.querySelectorAll('.trOpt');
+    for(var i=0;i<opts.length;i++){
+      (function(btn){
+        btn.addEventListener('click', function(){
+          var k=btn.getAttribute('data-k');
+          if(k==='hello'){
+            playHorn();
+            var ok=createTrace('hello','');
+            if(ok) toastSafe('📣 Привіт передано сусідам!');
+            closeMenu();
+          } else {
+            renderPhrases(k);
+          }
+        });
+      })(opts[i]);
+    }
+  }
+
+  function renderPhrases(type){
+    menuView=type;
+    var def=TYPES[type];
+    if(!elList || !def) return;
+    var parts=['<button class="cta sec" id="trBack" style="margin-top:0;">← Назад</button>'];
+    for(var i=0;i<def.phrases.length;i++){
+      parts.push('<button class="cta sec trPh" data-i="'+i+'" style="margin-top:8px;">'+def.phrases[i]+'</button>');
+    }
+    elList.innerHTML = parts.join('');
+
+    var back=document.getElementById('trBack');
+    if(back) back.addEventListener('click', renderRoot);
+
+    var phBtns = elList.querySelectorAll('.trPh');
+    for(var j=0;j<phBtns.length;j++){
+      (function(btn){
+        btn.addEventListener('click', function(){
+          var idx=parseInt(btn.getAttribute('data-i'),10);
+          var msg=def.phrases[idx];
+          var ok=createTrace(type, msg);
+          if(ok) toastSafe(def.emoji+' Слід залишено: «'+msg+'»');
+          closeMenu();
+        });
+      })(phBtns[j]);
+    }
+  }
+
+  function openMenu(){
+    try{
+      if(!window.TRACES.enabled || mqttUnavailable){ toastSafe('🐾 Сліди сусідів зараз недоступні'); return; }
+      ensureDom();
+      renderRoot();
+      if(elMenu) elMenu.classList.remove('hidden');
+    }catch(e){}
+  }
+  function closeMenu(){
+    try{ if(elMenu) elMenu.classList.add('hidden'); }catch(e){}
+  }
+
+  // ================= увімк/вимк =================
+  function applyEnabledVisual(){
+    try{
+      if(elBtn) elBtn.style.display = (window.TRACES.enabled && !mqttUnavailable) ? '' : 'none';
+      if(!window.TRACES.enabled){
+        closeMenu();
+        if(elClaim) elClaim.style.display='none';
+        try{ if(layer) map.removeLayer(layer); }catch(e){}
+      } else {
+        try{ if(layer && !map.hasLayer(layer)) layer.addTo(map); }catch(e){}
+      }
+    }catch(e){}
+  }
+
+  // ================= публічний контракт =================
+  window.TRACES = window.TRACES || {};
+  window.TRACES.enabled = true;
+
+  window.TRACES.init = function(){
+    try{
+      if(window.__tracesInited) return;
+      window.__tracesInited = true;
+
+      var onPref = null;
+      try{ onPref = localStorage.getItem(LS_ON); }catch(e){}
+      window.TRACES.enabled = (onPref===null) ? true : (onPref==='1' || onPref==='true');
+
+      mineMap = loadMine();
+      claimedSet = loadClaimed();
+
+      ensureDom();
+      applyEnabledVisual();
+    }catch(e){}
+  };
+
+  window.TRACES.step = function(dt){
+    try{
+      ensureConnected();
+      if(!window.TRACES.enabled){ if(elClaim) elClaim.style.display='none'; return; }
+      if(typeof phase==='undefined' || phase!=='play'){ if(elClaim) elClaim.style.display='none'; return; }
+      var d = (typeof dt==='number' && dt>0 && dt<1) ? dt : 0.016;
+      proxAccum += d;
+      if(proxAccum >= PROX_EVERY_S){
+        proxAccum = 0;
+        checkProximity();
+        pruneOwnExpired();
+      }
+    }catch(e){}
+  };
+
+  window.TRACES.setEnabled = function(v){
+    try{
+      var val = !!v;
+      window.TRACES.enabled = val;
+      try{ localStorage.setItem(LS_ON, val ? '1' : '0'); }catch(e){}
+      if(!val){
+        closeMenu();
+        disconnectMqtt();
+      }
+      applyEnabledVisual();
+      if(val) ensureConnected();
+    }catch(e){}
+  };
+
+  window.TRACES.leaveMenu = function(){ closeMenu(); };
+})();
+
+
+// ============================================================
+// ⚙️ НАЛАШТУВАННЯ + ПАУЗА (SETTINGS) — v0.6
+// Вставляється ІНЛАЙН у той самий <script>, що й гра. Бачить глобали
+// (phase, lastT, roadsOnly, toast, updateHUD) і модулі (window.FM/fmToggle,
+// window.TRACES, window.SAVE). Нічого не переоголошує.
+// Контракт: window.SETTINGS = { init, open, close, isPaused }
+// Також вводить window.MUTED (гра сама перевіряє його у speakLines/bell).
+// ============================================================
+(function(){
+  'use strict';
+
+  var LS_MUTED = 'kotik_muted';
+  var panel=null, body=null, prevPhase='play', paused=false, confirmWipe=false;
+
+  function on(v){ return v ? ' on' : ''; }
+
+  function setMuted(v){
+    try{ window.MUTED = !!v; localStorage.setItem(LS_MUTED, v ? '1':'0');
+      if(v){ try{ if(typeof speechSynthesis!=='undefined') speechSynthesis.cancel(); }catch(e){} }
+    }catch(e){ window.MUTED = !!v; }
+  }
+
+  function render(){
+    try{
+      if(!body) return;
+      var fmOn = !!(window.FM && window.FM.on);
+      var trOn = !!(window.TRACES && window.TRACES.enabled);
+      var muted = !!window.MUTED;
+      var roads = (typeof roadsOnly!=='undefined') ? !!roadsOnly : true;
+      var s = (window.SAVE && window.SAVE.stats) ? window.SAVE.stats() : {totalKm:0,totalEarned:0,sessions:0,money:0};
+      var rows = [];
+      rows.push('<button class="cta sec'+on(!muted)+'" data-a="sound">'+(muted?'🔇 Звук: вимкнено':'🔊 Звук: увімкнено')+'</button>');
+      rows.push('<button class="cta sec'+on(fmOn)+'" data-a="fm">📻 Оболонь FM: '+(fmOn?'увімк':'вимк')+'</button>');
+      rows.push('<button class="cta sec'+on(trOn)+'" data-a="traces">🐾 Сліди сусідів: '+(trOn?'увімк':'вимк')+'</button>');
+      rows.push('<button class="cta sec'+on(roads)+'" data-a="roads">'+(roads?'🛣️ Рух: лише по дорогах':'🗺️ Рух: будь-де')+'</button>');
+      rows.push('<div class="legend" style="margin-top:10px;">'+
+        '<b>Твій район у цифрах</b><br>'+
+        '💵 Гаманець: '+Math.round(s.money)+' грн<br>'+
+        '🛞 Пробіг: '+(s.totalKm||0).toFixed(1)+' км<br>'+
+        '📦 Усього зароблено: '+Math.round(s.totalEarned||0)+' грн<br>'+
+        '🚗 Поїздок: '+(s.sessions||0)+'</div>');
+      if(confirmWipe){
+        rows.push('<div class="legend" style="margin-top:10px;color:#a33;"><b>Точно почати заново?</b> Це зітре весь прогрес.</div>');
+        rows.push('<div class="row"><button class="cta" data-a="wipeYes" style="background:#d93a34;color:#fff;">Так, стерти</button>'+
+          '<button class="cta sec" data-a="wipeNo">Ні</button></div>');
+      } else {
+        rows.push('<button class="cta sec" data-a="wipe" style="margin-top:10px;color:#a33;">🗑 Почати заново</button>');
+      }
+      body.innerHTML = rows.join('');
+      var btns = body.querySelectorAll('[data-a]');
+      for(var i=0;i<btns.length;i++){ btns[i].addEventListener('click', onAction); }
+    }catch(e){}
+  }
+
+  function onAction(e){
+    try{
+      var a = e.currentTarget.getAttribute('data-a');
+      if(a==='sound'){ setMuted(!window.MUTED); }
+      else if(a==='fm'){ if(typeof fmToggle==='function') fmToggle(); else if(window.FM&&window.FM.toggle) window.FM.toggle(); }
+      else if(a==='traces'){ if(window.TRACES&&window.TRACES.setEnabled) window.TRACES.setEnabled(!window.TRACES.enabled); }
+      else if(a==='roads'){ var b=document.getElementById('modeBtn'); if(b) b.click(); else if(typeof roadsOnly!=='undefined') roadsOnly=!roadsOnly; }
+      else if(a==='wipe'){ confirmWipe=true; }
+      else if(a==='wipeYes'){ confirmWipe=false; if(window.SAVE&&window.SAVE.wipe) window.SAVE.wipe(); }
+      else if(a==='wipeNo'){ confirmWipe=false; }
+      render();
+    }catch(e2){}
+  }
+
+  function ensureDom(){
+    try{
+      var btn = document.getElementById('settingsBtn');
+      if(!btn){
+        btn = document.createElement('button');
+        btn.className='act'; btn.id='settingsBtn'; btn.title='Налаштування';
+        btn.innerHTML='⚙️<small>МЕНЮ</small>';
+        var actions=document.getElementById('actions');
+        if(actions) actions.appendChild(btn); else document.body.appendChild(btn);
+        btn.addEventListener('click', open);
+      }
+      panel = document.getElementById('setPanel');
+      if(!panel){
+        panel = document.createElement('div');
+        panel.id='setPanel'; panel.className='overlay hidden';
+        panel.innerHTML =
+          '<div class="card">'+
+            '<div class="paw">⚙️</div>'+
+            '<h1>Пауза й налаштування</h1>'+
+            '<div id="setBody"></div>'+
+            '<button class="cta" id="setResume" style="margin-top:12px;">▶ Продовжити</button>'+
+          '</div>';
+        document.body.appendChild(panel);
+        panel.addEventListener('click', function(ev){ if(ev.target===panel) close(); });
+        var r=document.getElementById('setResume'); if(r) r.addEventListener('click', close);
+      }
+      body = document.getElementById('setBody');
+    }catch(e){}
+  }
+
+  function open(){
+    try{
+      ensureDom(); confirmWipe=false;
+      if(typeof phase!=='undefined' && phase==='play'){ prevPhase='play'; phase='pause'; paused=true; }
+      else { prevPhase = (typeof phase!=='undefined') ? phase : 'play'; }
+      render();
+      if(panel) panel.classList.remove('hidden');
+    }catch(e){}
+  }
+  function close(){
+    try{
+      if(panel) panel.classList.add('hidden');
+      if(paused && prevPhase==='play'){ phase='play'; try{ lastT = performance.now(); }catch(e){} }
+      paused=false;
+    }catch(e){}
+  }
+
+  function init(){
+    try{
+      var m=null; try{ m=localStorage.getItem(LS_MUTED); }catch(e){}
+      window.MUTED = (m==='1');
+      ensureDom();
+    }catch(e){}
+  }
+
+  window.SETTINGS = { init:init, open:open, close:close, isPaused:function(){ return paused; } };
+})();
+
+
+fmInit(); window.liveInit&&window.liveInit(); window.SAVE&&window.SAVE.load(); window.TRACES&&window.TRACES.init(); window.SETTINGS&&window.SETTINGS.init();
 
 // ================= ЗАВАНТАЖЕННЯ ДАНИХ =================
 Promise.all([ fetch('data/roads.json').then(r=>r.json()), fetch('data/pois.json').then(r=>r.json()) ])
