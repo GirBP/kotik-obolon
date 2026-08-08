@@ -117,6 +117,16 @@
   #radioBtn.on{ background:#1a7a4f; }
   #radioBtn:active{ transform:translateX(-50%) scale(.95); }
 
+  /* міні-плеєр YouTube (радіо «Сенс» — офіційний embed) */
+  #ytBox{ position:absolute; left:50%; bottom:118px; transform:translateX(-50%); z-index:26;
+    width:min(92vw,380px); background:#15171c; border-radius:16px; overflow:hidden;
+    box-shadow:0 14px 44px rgba(0,0,0,.5); }
+  #ytBox.hidden{ display:none; }
+  #ytHead{ display:flex; align-items:center; justify-content:space-between; padding:8px 12px;
+    color:#fff; font-size:13px; font-weight:800; }
+  #ytClose{ border:none; background:#2a2e37; color:#fff; border-radius:9px; width:28px; height:28px; font-size:14px; }
+  #ytFrame{ display:block; width:100%; aspect-ratio:16/9; border:0; background:#000; }
+
   /* панель послідовності старту */
   #seq{ position:absolute; left:0; right:0; bottom:0; z-index:25; padding:14px;
         padding-bottom:calc(14px + env(safe-area-inset-bottom)); display:flex; justify-content:center;
@@ -171,6 +181,10 @@
 
 <button id="ctx"></button>
 <button id="radioBtn">📻 Радіо</button>
+<div id="ytBox" class="hidden">
+  <div id="ytHead"><span>📻 Радіо «Сенс»</span><button id="ytClose">✕</button></div>
+  <iframe id="ytFrame" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+</div>
 
 <div id="manualCtl" class="hidden">
   <button class="mbtn sm" id="gearDown">▼</button>
@@ -477,6 +491,15 @@ const RADIO_TEXT={
         "І не введи нас у спокусу, але визволи нас від лукавого. Амінь."]
 };
 let radio={on:false,type:null,audio:null};
+// ID відео з ОФІЦІЙНОГО каналу Стерненка для радіо «Сенс» (офіційний YouTube-embed:
+// звук стрімиться з його каналу, нічого не копіюється). Заповнюється власником гри.
+const SENS_YT=[];
+function openYt(){ const ids=SENS_YT.filter(Boolean); if(!ids.length) return false;
+  const id=ids[Math.floor(Math.random()*ids.length)];
+  document.getElementById('ytFrame').src='https://www.youtube-nocookie.com/embed/'+encodeURIComponent(id)+'?autoplay=1&playsinline=1';
+  document.getElementById('ytBox').classList.remove('hidden'); return true; }
+function closeYt(){ document.getElementById('ytFrame').src=''; document.getElementById('ytBox').classList.add('hidden'); }
+document.getElementById('ytClose').addEventListener('click',()=>stopRadio());
 let AC=null;
 function ac(){ if(!AC){ const C=window.AudioContext||window.webkitAudioContext; AC=new C(); } if(AC.state==='suspended') AC.resume(); return AC; }
 function bell(freq,t0,dur,vol){ const a=ac(); const o=a.createOscillator(), g=a.createGain();
@@ -499,6 +522,10 @@ function synthRadio(type){
 }
 function startRadio(type){
   stopRadio(); radio.on=true; radio.type=type;
+  document.getElementById('radioBtn').classList.add('on');
+  document.getElementById('radioBtn').textContent='📻 Вимкнути';
+  if(type==='sens' && openYt()){                        // офіційний YouTube-embed, якщо задано відео
+    toast('📻 Радіо «Сенс»: ефір з каналу Стерненка'); return; }
   const a=new Audio('assets/radio_'+type+'.mp3');       // власний файл, якщо є
   a.onerror=()=>{ radio.audio=null; if(radio.on&&radio.type===type) synthRadio(type); };
   a.oncanplaythrough=()=>{ if(radio.on&&radio.type===type){ a.loop=true; a.play().catch(()=>synthRadio(type)); } };
@@ -508,6 +535,7 @@ function startRadio(type){
   toast(type==='sens' ? '📻 Радіо «Сенс» в ефірі!' : '🔔 Дзвони та молитва');
 }
 function stopRadio(){
+  closeYt();
   if(radio.audio){ try{radio.audio.pause();}catch(_){ } radio.audio=null; }
   try{ window.speechSynthesis && speechSynthesis.cancel(); }catch(_){ }
   radio.on=false; radio.type=null;
