@@ -37,6 +37,14 @@
 - Ціни пального — ринкові дані 2026 (див. `data/specs/` у робочій копії).
 - Карта — [Leaflet](https://leafletjs.com/) + тайли CARTO/OSM.
 
+## Документація
+
+- [docs/GAME.md](docs/GAME.md) — опис гри «людською мовою» (що це, як грається, для кого)
+- [docs/UNIVERSE.md](docs/UNIVERSE.md) — біблія всесвіту: канон, тон, три стовпи світу
+- [docs/GDD.md](docs/GDD.md) — специфікація гри (механіки, економіка, архітектура)
+- [docs/AUDIT.md](docs/AUDIT.md) — аудит стану і дорожня карта до комерційного рівня
+- [CHANGELOG.md](CHANGELOG.md) — журнал версій
+
 ## Технічне
 
 Один файл `index.html` (HTML + CSS + JS, без збірки і бекенду) + `data/roads.json`
