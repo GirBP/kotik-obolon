@@ -91,6 +91,9 @@
         font-size:17px; font-weight:800; width:100%; cursor:pointer; }
   .cta.sec{ background:#eceef1; color:var(--ink); }
   .cta.sec.on{ background:var(--accent); color:#3a2a05; }
+  .inp{ flex:1; min-width:0; border:1.5px solid #d8dbe0; border-radius:12px; padding:12px 12px;
+        font-size:15px; font-weight:600; color:var(--ink); background:#fafbfc; }
+  .inp:focus{ outline:none; border-color:var(--accent); }
   .cta:active{ transform:scale(.97); }
   .row{ display:flex; gap:8px; margin-top:8px; }
   .row .cta{ margin-top:0; }
@@ -106,6 +109,13 @@
         transform:rotate(-45deg); font-size:15px; box-shadow:0 2px 5px rgba(0,0,0,.35); border:2px solid #fff; }
   .poi span{ transform:rotate(45deg); }
   .poi.fuel{ background:#e8442e; } .poi.church{ background:#8a63d2; } .poi.job{ background:var(--accent); }
+  .poi.sens{ background:#1a7a4f; }
+
+  #radioBtn{ position:absolute; left:50%; bottom:252px; transform:translateX(-50%); z-index:12; pointer-events:auto;
+    background:#232630; color:#fff; font-weight:800; font-size:14px; padding:11px 18px; border:none; border-radius:16px;
+    box-shadow:0 6px 18px rgba(0,0,0,.35); display:none; }
+  #radioBtn.on{ background:#1a7a4f; }
+  #radioBtn:active{ transform:translateX(-50%) scale(.95); }
 
   /* панель послідовності старту */
   #seq{ position:absolute; left:0; right:0; bottom:0; z-index:25; padding:14px;
@@ -146,6 +156,7 @@
   <div class="chip">⛽ <span class="gauge"><i id="fuelBar"></i></span> <span id="range">—</span><small>км</small></div>
   <div class="chip">🚗 <span id="speed">0</span><small>км/год</small></div>
   <div class="chip hidden" id="gearChip">⚙️ <b id="gearVal">N</b> <span class="gauge"><i id="rpmBar" style="background:#2b7fd4"></i></span></div>
+  <div class="chip hidden" id="mpChip">👥 1</div>
   <div class="chip" id="street"><span>—</span></div>
 </div>
 
@@ -159,6 +170,7 @@
 </div>
 
 <button id="ctx"></button>
+<button id="radioBtn">📻 Радіо</button>
 
 <div id="manualCtl" class="hidden">
   <button class="mbtn sm" id="gearDown">▼</button>
@@ -201,6 +213,11 @@
       <button class="cta sec on" id="modeAuto">🅰️ Автомат</button>
       <button class="cta sec" id="modeManual">🔧 Механіка</button>
     </div>
+    <div class="row" style="margin-top:8px;">
+      <input class="inp" id="mpNick" placeholder="Нік" maxlength="12">
+      <input class="inp" id="mpRoom" placeholder="Кімната" maxlength="16" value="obolon">
+    </div>
+    <button class="cta sec" id="mpToggle" style="margin-top:8px;">👥 Грати разом: вимк</button>
     <div style="font-size:11px;color:#999;margin-top:5px;">Механіка: зчеплення, передачі, двигун глохне — для двох рук.</div>
     <button class="cta" id="startBtn" style="margin-top:10px;">Поїхали! 🚦</button>
     <div id="loadNote" style="font-size:12px;color:#999;margin-top:8px;">Завантаження карти Оболоні…</div>
@@ -224,6 +241,7 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <script>
 // ================= КОНФІГ =================
 const CFG = {
@@ -235,6 +253,9 @@ const CFG = {
   jobBase: 40, jobPerKm: 20,
   churchBonus: 50, churchCooldownSec: 90,
   arrive: 22,              // м — радіус «прибуття»
+  laneW: 3.0,              // ширина смуги, м
+  radioR: 85,              // радіус дії радіо біля POI, м (храми стоять у глибині кварталів)
+  holdMs: 240,             // тап (зміна смуги) vs утримання (кермо)
 };
 const BRAND_PRICE = { WOG:78.9, ОККО:78.9, SOCAR:77.9, KLO:72.9, "КЛО":72.9,
   "Народна":71.0, Parallel:73.0 };
@@ -302,9 +323,10 @@ const LANDMARKS = [
 ];
 
 // ================= КАРТА =================
+const canvasR = L.canvas({ padding: 0.4 });
 const map = L.map('map', { center: CFG.center, zoom: CFG.zoom, zoomControl:false, attributionControl:false,
   dragging:false, scrollWheelZoom:false, doubleClickZoom:false, boxZoom:false, keyboard:false,
-  touchZoom:false, inertia:false, zoomSnap:0 });
+  touchZoom:false, inertia:false, zoomSnap:0, renderer: canvasR });
 L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
   { maxZoom: CFG.zoom, maxNativeZoom: 19, subdomains:'abcd' }).addTo(map);
 
@@ -325,38 +347,96 @@ let jobMarker=null;
 const input={ left:false, right:false, gas:false, brake:false, clutch:false };
 let selectedMode='auto';
 let handedMode='two', steerTarget=0, steerActive=false, steerStartX=0, cruiseSet=40;
+let curLanes=1;
+function laneChange(dir){ // -1 = лівіше (до осі), +1 = правіше (до узбіччя)
+  if(!roadsOnly || curLanes<2) return;
+  const old=car.lane;
+  car.lane=Math.max(0,Math.min(curLanes-1, car.lane+dir));
+  if(car.lane!==old) toast(`Смуга ${car.lane+1} із ${curLanes}`);
+}
 let segments=[], grid=new Map(), GRID=60;
 let fuelMarks=[], churchMarks=[], stations=[];
 let lastT=0;
 
 // ================= ДОРОГИ (сегменти + сітка) =================
 function buildRoads(roads){
+  const markings=[];
   roads.forEach(line=>{ const g=line.g;
+    const lanes=line.l||1, oneway=line.o||0, cls=line.h||'service';
+    const ptsXY=g.map(p=>toXY(p[0],p[1]));
     for(let i=0;i<g.length-1;i++){
-      const A=toXY(g[i][0],g[i][1]), B=toXY(g[i+1][0],g[i+1][1]);
+      const A=ptsXY[i], B=ptsXY[i+1];
       const dx=B.x-A.x, dy=B.y-A.y, len2=dx*dx+dy*dy;
       if(len2<0.5) continue;
-      const s={ ax:A.x,ay:A.y,dx,dy,len2, name:line.n||'' };
+      const s={ ax:A.x,ay:A.y,dx,dy,len2, name:line.n||'', l:lanes, o:oneway, svc: cls==='service'?1:0 };
       const idx=segments.push(s)-1;
-      // у сітку — по клітинках bbox
       const x0=Math.min(A.x,B.x), x1=Math.max(A.x,B.x), y0=Math.min(A.y,B.y), y1=Math.max(A.y,B.y);
       for(let cx=Math.floor(x0/GRID);cx<=Math.floor(x1/GRID);cx++)
         for(let cy=Math.floor(y0/GRID);cy<=Math.floor(y1/GRID);cy++){
           const k=cx+','+cy; if(!grid.has(k)) grid.set(k,[]); grid.get(k).push(idx);
         }
-    }});
+    }
+    // розмітка — лише на класифікованих дорогах (у дворах її нема)
+    if(cls!=='service' && cls!=='living_street' && ptsXY.length>1){
+      markings.push({pts:ptsXY, lanes, oneway});
+    }
+  });
+  drawMarkings(markings);
 }
-function nearestRoad(x,y){
+
+// зміщення полілінії на d метрів праворуч від напряму (усереднені нормалі)
+function offsetLine(pts, d){
+  const out=[];
+  for(let i=0;i<pts.length;i++){
+    const p0=pts[Math.max(0,i-1)], p1=pts[Math.min(pts.length-1,i+1)];
+    let nx=p1.y-p0.y, ny=-(p1.x-p0.x);
+    const L=Math.hypot(nx,ny)||1; nx/=L; ny/=L;
+    out.push(fromXY(pts[i].x+nx*d, pts[i].y+ny*d));
+  }
+  return out.map(p=>[p.lat,p.lng]);
+}
+function drawMarkings(ways){
+  const layer=L.layerGroup();
+  const W=CFG.laneW;
+  ways.forEach(w=>{
+    const latlngs=w.pts.map(p=>{ const q=fromXY(p.x,p.y); return [q.lat,q.lng]; });
+    if(w.oneway){
+      // односмугова стрічка: роздільники між смугами, по центру ширини
+      for(let k=1;k<w.lanes;k++){
+        const off=(k - w.lanes/2)*W;
+        L.polyline(offsetLine(w.pts,off), {color:'#fff', weight:1.3, opacity:.85, dashArray:'7,11', interactive:false}).addTo(layer);
+      }
+    } else {
+      // осьова: суцільна (широкі) або переривчаста (вузькі)
+      if(w.lanes>=2)
+        L.polyline(latlngs, {color:'#fff', weight:2.2, opacity:.95, interactive:false}).addTo(layer);
+      else
+        L.polyline(latlngs, {color:'#fff', weight:1.4, opacity:.8, dashArray:'9,13', interactive:false}).addTo(layer);
+      // роздільники смуг у кожному напрямку
+      for(let k=1;k<w.lanes;k++){
+        for(const sgn of [1,-1]){
+          L.polyline(offsetLine(w.pts, sgn*k*W), {color:'#fff', weight:1.2, opacity:.75, dashArray:'7,11', interactive:false}).addTo(layer);
+        }
+      }
+    }
+  });
+  layer.addTo(map);
+}
+function nearestRoad(x,y,stickyName){
+  // score = відстань + штраф двору − бонус «тієї самої вулиці»:
+  // великі дороги не втрачаються через паралельні проїзди, але у двір заїхати можна.
   const cx=Math.floor(x/GRID), cy=Math.floor(y/GRID);
-  let best=null, bd=Infinity;
+  let best=null, bs=Infinity;
   for(let R=1; R<=6; R++){
     for(let i=-R;i<=R;i++) for(let j=-R;j<=R;j++){
       const arr=grid.get((cx+i)+','+(cy+j)); if(!arr) continue;
       for(const idx of arr){ const s=segments[idx];
         let t=((x-s.ax)*s.dx+(y-s.ay)*s.dy)/s.len2; t=Math.max(0,Math.min(1,t));
         const px=s.ax+t*s.dx, py=s.ay+t*s.dy;
-        const d=(x-px)*(x-px)+(y-py)*(y-py);
-        if(d<bd){ bd=d; best={px,py,dist:Math.sqrt(d),ang:Math.atan2(s.dx,s.dy),name:s.name}; }
+        const d=Math.sqrt((x-px)*(x-px)+(y-py)*(y-py));
+        let score=d + (s.svc?9:0);
+        if(stickyName && s.name && s.name===stickyName) score-=7;
+        if(score<bs){ bs=score; best={px,py,dist:d,ang:Math.atan2(s.dx,s.dy),name:s.name,l:s.l||1,o:s.o||0,svc:s.svc||0}; }
       }}
     if(best) break;
   }
@@ -366,13 +446,144 @@ function nearestRoad(x,y){
 // ================= POI =================
 function poiIcon(cls,emoji){ return L.divIcon({ className:'', iconSize:[30,30], iconAnchor:[15,30],
   html:`<div class="poi ${cls}"><span>${emoji}</span></div>` }); }
+let sensPoi=null;
 function addPOIs(pois){
   pois.fuel.forEach(f=>{ const price=BRAND_PRICE[f.name]||74.0;
     stations.push({...f, a95:price, lpg:LPG_PRICE});
     fuelMarks.push(L.marker([f.lat,f.lng],{icon:poiIcon('fuel','⛽')}).addTo(map)); });
-  pois.churches.forEach(c=>{ churchMarks.push({...c,
+  pois.churches.forEach(c=>{
+    // персональний радіус: храм може стояти в глибині кварталу — рахуємо від найближчої дороги
+    const xy=toXY(c.lat,c.lng); const nr=nearestRoad(xy.x,xy.y);
+    const r=Math.max(CFG.radioR, (nr?nr.dist:0)+30);
+    churchMarks.push({...c, r,
     mk:L.marker([c.lat,c.lng],{icon:poiIcon('church','⛪')}).addTo(map)}); });
+  if(pois.sens){ sensPoi=pois.sens;
+    L.marker([sensPoi.lat,sensPoi.lng],{icon:poiIcon('sens','📚')}).addTo(map); }
 }
+
+// ================= РАДІО (Сенс / церква) =================
+// Голосу Стерненка тут НЕМАЄ і не імітується: диктор (TTS) лише згадує співпрацю.
+// Якщо покладеш ліцензовані файли assets/radio_sens.mp3 / assets/radio_church.mp3 —
+// гратимуть вони замість синтезу.
+const RADIO_TEXT={
+  sens:["Ви слухаєте Радіо «Сенс»!",
+        "У книгарні «Сенс» — нові українські книжки, кава та розмови про головне.",
+        "Триває спільний благодійний збір книгарні «Сенс» і Сергія Стерненка на дрони для війська — долучайтесь!",
+        "Читаймо українське. Слава Україні!"],
+  church:["Отче наш, що єси на небесах, нехай святиться ім'я Твоє.",
+        "Нехай прийде Царство Твоє, нехай буде воля Твоя, як на небі, так і на землі.",
+        "Хліб наш насущний дай нам сьогодні.",
+        "І прости нам провини наші, як і ми прощаємо винуватцям нашим.",
+        "І не введи нас у спокусу, але визволи нас від лукавого. Амінь."]
+};
+let radio={on:false,type:null,audio:null};
+let AC=null;
+function ac(){ if(!AC){ const C=window.AudioContext||window.webkitAudioContext; AC=new C(); } if(AC.state==='suspended') AC.resume(); return AC; }
+function bell(freq,t0,dur,vol){ const a=ac(); const o=a.createOscillator(), g=a.createGain();
+  o.type='sine'; o.frequency.value=freq; o.connect(g); g.connect(a.destination);
+  g.gain.setValueAtTime(vol,t0); g.gain.exponentialRampToValueAtTime(0.001,t0+dur);
+  o.start(t0); o.stop(t0+dur); }
+function churchBells(){ const t=ac().currentTime+0.05; [523,392,330,392,523].forEach((f,i)=>bell(f,t+i*0.9,2.4,0.22)); }
+function sensJingle(){ const t=ac().currentTime+0.05; [660,880,990].forEach((f,i)=>bell(f,t+i*0.18,0.5,0.18)); }
+function speakLines(lines){
+  if(!('speechSynthesis' in window)) return false;
+  const vs=speechSynthesis.getVoices(); const uk=vs.find(v=>/^uk/i.test(v.lang));
+  if(!uk) return false;
+  speechSynthesis.cancel();
+  lines.forEach(tx=>{ const u=new SpeechSynthesisUtterance(tx); u.voice=uk; u.lang=uk.lang; u.rate=1.0; speechSynthesis.speak(u); });
+  return true;
+}
+function synthRadio(type){
+  if(type==='sens'){ sensJingle(); setTimeout(()=>{ if(radio.on&&radio.type==='sens'){ if(!speakLines(RADIO_TEXT.sens)) toast('📻 '+RADIO_TEXT.sens[2]); } },800); }
+  else { churchBells(); setTimeout(()=>{ if(radio.on&&radio.type==='church'){ if(!speakLines(RADIO_TEXT.church)) toast('📻 '+RADIO_TEXT.church[0]); } },4200); }
+}
+function startRadio(type){
+  stopRadio(); radio.on=true; radio.type=type;
+  const a=new Audio('assets/radio_'+type+'.mp3');       // власний файл, якщо є
+  a.onerror=()=>{ radio.audio=null; if(radio.on&&radio.type===type) synthRadio(type); };
+  a.oncanplaythrough=()=>{ if(radio.on&&radio.type===type){ a.loop=true; a.play().catch(()=>synthRadio(type)); } };
+  radio.audio=a;
+  document.getElementById('radioBtn').classList.add('on');
+  document.getElementById('radioBtn').textContent='📻 Вимкнути';
+  toast(type==='sens' ? '📻 Радіо «Сенс» в ефірі!' : '🔔 Дзвони та молитва');
+}
+function stopRadio(){
+  if(radio.audio){ try{radio.audio.pause();}catch(_){ } radio.audio=null; }
+  try{ window.speechSynthesis && speechSynthesis.cancel(); }catch(_){ }
+  radio.on=false; radio.type=null;
+  const b=document.getElementById('radioBtn'); b.classList.remove('on'); b.textContent='📻 Радіо';
+}
+let radioNearType=null;
+function updateRadio(lat,lng){
+  let t=null;
+  if(sensPoi && dist(lat,lng,sensPoi.lat,sensPoi.lng)<CFG.radioR) t='sens';
+  if(!t){ for(const c of churchMarks){ if(dist(lat,lng,c.lat,c.lng)<(c.r||CFG.radioR)){ t='church'; break; } } }
+  radioNearType=t;
+  if(radio.on && !t) stopRadio();               // від'їхав — радіо згасає
+  const b=document.getElementById('radioBtn');
+  b.style.display = (t||radio.on) ? 'block' : 'none';
+}
+document.getElementById('radioBtn').addEventListener('click',()=>{
+  if(radio.on) stopRadio(); else if(radioNearType) startRadio(radioNearType);
+});
+if('speechSynthesis' in window){ speechSynthesis.getVoices(); speechSynthesis.onvoiceschanged=()=>speechSynthesis.getVoices(); }
+
+// ================= МУЛЬТИПЛЕЄР (публічний MQTT-брокер) =================
+// Канал публічний (best-effort): передаються лише нік і позиція котика в грі.
+const MP_BROKERS=['wss://broker.emqx.io:8084/mqtt','wss://broker.hivemq.com:8884/mqtt'];
+let mpEnabled=false;
+const mp={on:false,client:null,id:'k'+Math.random().toString(36).slice(2,9),
+          nick:'Котик',room:'obolon',ghosts:new Map(),pubT:null,brokerIdx:0,base:''};
+function hueOf(id){ let h=0; for(const ch of id) h=(h*31+ch.charCodeAt(0))%360; return h; }
+function ghostIcon(n,hue){ return L.divIcon({className:'',iconSize:[40,46],iconAnchor:[20,23],
+  html:`<div style="text-align:center"><div style="font-size:9px;font-weight:800;background:rgba(20,22,26,.85);color:#fff;border-radius:6px;padding:1px 5px;margin-bottom:1px;white-space:nowrap;max-width:64px;overflow:hidden">${n}</div><div style="width:16px;height:26px;margin:0 auto;background:hsl(${hue},85%,55%);border-radius:6px 6px 7px 7px;border:2px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.4)"></div></div>`}); }
+function mpStart(){
+  if(!window.mqtt){ toast('👥 Мультиплеєр недоступний (не завантажився mqtt)'); return; }
+  mp.nick=(document.getElementById('mpNick').value.trim()||'Котик').slice(0,12);
+  mp.room=(document.getElementById('mpRoom').value.trim().replace(/[^\wа-яіїєґ-]/gi,'')||'obolon').slice(0,16);
+  try{ localStorage.setItem('mpNick',mp.nick); localStorage.setItem('mpRoom',mp.room); }catch(_){ }
+  mp.base='kotikobolon/'+mp.room;
+  connectBroker();
+  clearInterval(mp.pubT);
+  mp.pubT=setInterval(()=>{ if(mp.on && phase==='play' && mp.client && mp.client.connected){
+    mp.client.publish(mp.base+'/pos', JSON.stringify({id:mp.id,n:mp.nick,x:+car.x.toFixed(1),y:+car.y.toFixed(1)})); } },150);
+  setInterval(mpPrune,2000);
+}
+function connectBroker(){
+  const url=MP_BROKERS[mp.brokerIdx%MP_BROKERS.length];
+  try{ mp.client=mqtt.connect(url,{clientId:'kotik_'+mp.id,keepalive:30,connectTimeout:6000,
+    will:{topic:mp.base+'/leave',payload:JSON.stringify({id:mp.id}),qos:0,retain:false}}); }
+  catch(_){ return; }
+  mp.client.on('connect',()=>{ mp.on=true;
+    mp.client.subscribe(mp.base+'/pos'); mp.client.subscribe(mp.base+'/leave');
+    toast('👥 Кімната «'+mp.room+'»: підʼєднано'); updateMpChip(); });
+  mp.client.on('message',(t,msg)=>{ try{ const d=JSON.parse(msg.toString());
+    if(!d.id || d.id===mp.id) return;
+    if(t.endsWith('/leave')){ mpDrop(d.id); return; }
+    mpGhost(d); }catch(_){ } });
+  mp.client.on('error',()=>{ if(!mp.on){ try{mp.client.end(true);}catch(_){ }
+    mp.brokerIdx++; if(mp.brokerIdx<MP_BROKERS.length) connectBroker();
+    else toast('👥 Брокер недоступний — мультиплеєр вимкнено'); } });
+}
+function mpStop(){ if(mp.client){ try{ mp.client.publish(mp.base+'/leave',JSON.stringify({id:mp.id})); mp.client.end(true); }catch(_){ } }
+  mp.client=null; mp.on=false; clearInterval(mp.pubT);
+  mp.ghosts.forEach(g=>map.removeLayer(g.mk)); mp.ghosts.clear(); updateMpChip(); }
+function mpGhost(d){ let g=mp.ghosts.get(d.id); const p=fromXY(d.x,d.y);
+  if(!g){ g={mk:L.marker([p.lat,p.lng],{icon:ghostIcon((d.n||'?').slice(0,12),hueOf(d.id)),interactive:false}).addTo(map),last:0};
+    mp.ghosts.set(d.id,g); updateMpChip(); toast('👥 '+(d.n||'Гравець')+' у кімнаті!'); }
+  g.last=performance.now(); g.mk.setLatLng([p.lat,p.lng]); }
+function mpDrop(id){ const g=mp.ghosts.get(id); if(g){ map.removeLayer(g.mk); mp.ghosts.delete(id); updateMpChip(); } }
+function mpPrune(){ const now=performance.now(); for(const [id,g] of mp.ghosts){ if(now-g.last>6000) mpDrop(id); } }
+function updateMpChip(){ const c=document.getElementById('mpChip');
+  if(mp.on){ c.classList.remove('hidden'); c.textContent='👥 '+(1+mp.ghosts.size); } else c.classList.add('hidden'); }
+document.getElementById('mpToggle').addEventListener('click',()=>{
+  mpEnabled=!mpEnabled;
+  const b=document.getElementById('mpToggle');
+  b.textContent='👥 Грати разом: '+(mpEnabled?'увімк':'вимк');
+  b.classList.toggle('on',mpEnabled);
+});
+try{ document.getElementById('mpNick').value=localStorage.getItem('mpNick')||'';
+     document.getElementById('mpRoom').value=localStorage.getItem('mpRoom')||'obolon'; }catch(_){ }
 
 // ================= ЕКОНОМІКА / ПАЛИВО =================
 function rangeKm(){ return (fuel / CFG.consCity) * 100; }
@@ -500,19 +711,31 @@ function step(dt){
 
   // режим «лише по дорогах» — м'яко притягуємо до найближчої дороги + вирівнюємо курс
   if(roadsOnly){
-    const r=nearestRoad(car.x,car.y);
+    const r=nearestRoad(car.x,car.y, car.roadName);
     if(r){
-      if(r.dist>14){ car.x=r.px; car.y=r.py; }         // не пускаємо далеко: жорстко на вісь дороги
-      else { const k=Math.min(1,dt*10); car.x+=(r.px-car.x)*k; car.y+=(r.py-car.y)*k; }  // близько — м'який магніт
-      // вирівняти курс до напряму дороги (найближчий з двох)
+      car.roadName=r.name;
+      // напрям руху вздовж дороги (з двох — ближчий до курсу)
       let a=r.ang; let diff=((a-car.heading+Math.PI)%(2*Math.PI))-Math.PI;
       if(Math.abs(diff)>Math.PI/2){ a+=Math.PI; diff=((a-car.heading+Math.PI)%(2*Math.PI))-Math.PI; }
+      // правостороння їзда: ціль = вісь + зсув у свою смугу (праворуч від напряму руху)
+      const lanes = r.svc?1:(r.l||1);
+      if(car.lane>lanes-1) car.lane=lanes-1;
+      let off;
+      if(r.svc) off=0;                                        // у дворах — по осі проїзду
+      else if(r.o) off=(car.lane+0.5-lanes/2)*CFG.laneW;      // односторонка: смуги центровано
+      else off=(car.lane+0.5)*CFG.laneW;                      // двобічна: праворуч від осьової
+      const tx=r.px+Math.cos(a)*off, ty=r.py-Math.sin(a)*off;
+      const dx2=car.x-tx, dy2=car.y-ty;
+      if(dx2*dx2+dy2*dy2>14*14){ car.x=tx; car.y=ty; }        // задалеко — жорстко в смугу
+      else { const k=Math.min(1,dt*10); car.x+=(tx-car.x)*k; car.y+=(ty-car.y)*k; }
       const steering=(input.left||input.right||Math.abs(steerTarget)>0.15);
       const align=steering?dt*1.5:dt*5;   // менше вирівнювання під час керма (щоб можна було повертати)
       car.heading+=diff*Math.min(1,align);
-      streetName(r.name);
+      curLanes=lanes;
+      const nm = r.name || (r.svc ? 'двір · проїзд' : '—');
+      streetName(nm + (lanes>1 && !r.svc ? ` · смуга ${car.lane+1}/${lanes}` : ''));
     }
-  } else streetName('вільний режим');
+  } else { curLanes=1; streetName('вільний режим'); }
 
   // паливо / бонуси / кулдауни
   if(Math.abs(car.speed)>0.5) useFuel(Math.abs(distM)); else if(car.engineRunning) fuel=Math.max(0,fuel-CFG.idleLh/3600*dt);
@@ -524,6 +747,7 @@ function step(dt){
   carEl.style.transform=`rotate(${car.heading}rad)`;
   checkJob(p.lat,p.lng);
   updateCtx(p.lat,p.lng);
+  updateRadio(p.lat,p.lng);
   updateHUD();
 }
 let lowShown=false;
@@ -537,7 +761,36 @@ function bind(id,key){ const b=document.getElementById(id);
   b.addEventListener('pointerdown',e=>{ e.preventDefault(); try{b.setPointerCapture(e.pointerId);}catch(_){ } input[key]=true; });
   const off=e=>{ e.preventDefault(); input[key]=false; };
   b.addEventListener('pointerup',off); b.addEventListener('pointercancel',off); }
-bind('left','left'); bind('right','right'); bind('gas','gas'); bind('brake','brake');
+bind('gas','gas'); bind('brake','brake');
+// ◀▶: короткий тап = зміна смуги (у режимі доріг), утримання = кермо
+function bindSteer(id,key,dir){
+  const b=document.getElementById(id); let downAt=0, timer=null, held=false;
+  b.addEventListener('pointerdown',e=>{ e.preventDefault(); try{b.setPointerCapture(e.pointerId);}catch(_){}
+    downAt=performance.now(); held=false;
+    if(roadsOnly && phase==='play' && curLanes>1){
+      timer=setTimeout(()=>{ held=true; input[key]=true; }, CFG.holdMs);   // кермо після затримки
+    } else { held=true; input[key]=true; }                                  // вільний режим — одразу кермо
+  });
+  const up=e=>{ e.preventDefault(); clearTimeout(timer);
+    const wasTap=!held && (performance.now()-downAt)<CFG.holdMs;
+    input[key]=false;
+    if(wasTap && phase==='play') laneChange(dir); };
+  b.addEventListener('pointerup',up); b.addEventListener('pointercancel',up);
+}
+bindSteer('left','left',-1); bindSteer('right','right',1);
+const steerKeyState={};
+function steerKeyDown(key,dir){
+  if(steerKeyState[key]) return; steerKeyState[key]={at:performance.now(),held:false,timer:null};
+  if(roadsOnly && phase==='play' && curLanes>1)
+    steerKeyState[key].timer=setTimeout(()=>{ steerKeyState[key].held=true; input[key]=true; }, CFG.holdMs);
+  else { steerKeyState[key].held=true; input[key]=true; }
+}
+function steerKeyUp(key,dir){
+  const st=steerKeyState[key]; if(!st) return; clearTimeout(st.timer);
+  const wasTap=!st.held && (performance.now()-st.at)<CFG.holdMs;
+  input[key]=false; delete steerKeyState[key];
+  if(wasTap && phase==='play') laneChange(dir);
+}
 // механіка: зчеплення (утримання) + передачі + вибір режиму
 (function(){ const cb=document.getElementById('clutchBtn');
   cb.addEventListener('pointerdown',e=>{ e.preventDefault(); try{cb.setPointerCapture(e.pointerId);}catch(_){ } input.clutch=true; cb.classList.add('pressed'); });
@@ -549,10 +802,15 @@ const mA=document.getElementById('modeAuto'), mM=document.getElementById('modeMa
 mA.addEventListener('click',()=>{ selectedMode='auto'; mA.classList.add('on'); mM.classList.remove('on'); });
 mM.addEventListener('click',()=>{ selectedMode='manual'; mM.classList.add('on'); mA.classList.remove('on'); });
 const km={ArrowLeft:'left',ArrowRight:'right',ArrowUp:'gas',ArrowDown:'brake',a:'left',d:'right',w:'gas',s:'brake',c:'clutch',ф:'left',в:'right',ц:'gas',і:'brake',с:'clutch'};
-addEventListener('keydown',e=>{ const k=km[e.key]; if(k){ e.preventDefault(); input[k]=true; return; }
+addEventListener('keydown',e=>{ const k=km[e.key]; if(k){ e.preventDefault();
+    if(k==='left'||k==='right'){ if(!e.repeat) steerKeyDown(k, k==='left'?-1:1); }
+    else input[k]=true;
+    return; }
   if(e.key==='e'||e.key==='E'||e.key==='у'){ shiftGear(1); } else if(e.key==='q'||e.key==='Q'||e.key==='й'){ shiftGear(-1); }
   else if(e.key==='r'||e.key==='R'||e.key==='к'){ startEngine(); } });
-addEventListener('keyup',e=>{ const k=km[e.key]; if(k){ e.preventDefault(); input[k]=false; }});
+addEventListener('keyup',e=>{ const k=km[e.key]; if(k){ e.preventDefault();
+    if(k==='left'||k==='right') steerKeyUp(k, k==='left'?-1:1);
+    else input[k]=false; }});
 
 document.getElementById('modeBtn').addEventListener('click',()=>{ roadsOnly=!roadsOnly;
   const b=document.getElementById('modeBtn'); b.classList.toggle('on',!roadsOnly);
@@ -605,15 +863,17 @@ const SEQ=[
 let seqIdx=0, seqTimer=null;
 function initGame(){ if(handedMode==='one') selectedMode='auto';
   car={x:0,y:0,heading:0,speed:0,engineRunning:false,belt:false,
-  mode:selectedMode, gear:0, clutch:1, rpm:0, gearDisp:'N', stallT:0};
+  mode:selectedMode, gear:0, clutch:1, rpm:0, gearDisp:'N', stallT:0, lane:99};
   fuel=CFG.startFuel; money=CFG.startMoney; churchCd=0; blessing=0; job=null; lowShown=false;
   document.getElementById('manualCtl').classList.toggle('hidden', selectedMode!=='manual');
   document.getElementById('gearChip').classList.toggle('hidden', selectedMode!=='manual');
   document.getElementById('jobBtn').classList.remove('on'); updateHUD(); }
 function startGame(){ initGame(); car.engineRunning=true; car.belt=true;   // швидкий старт (фолбек/тест)
+  if(mpEnabled && !mp.on) mpStart();
   document.getElementById('startScreen').classList.add('hidden'); document.getElementById('seq').classList.add('hidden');
   phase='play'; lastT=performance.now(); window.applyHanded&&window.applyHanded(); }
 function startSequence(){ initGame();
+  if(mpEnabled && !mp.on) mpStart();
   document.getElementById('startScreen').classList.add('hidden');
   const p=fromXY(0,0); map.setView([p.lat,p.lng],CFG.zoom,{animate:false});
   phase='sequence'; seqIdx=0; document.getElementById('seq').classList.remove('hidden'); runSeqStep(); }
