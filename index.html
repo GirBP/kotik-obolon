@@ -736,9 +736,9 @@ const fuelPanel=document.getElementById('fuelPanel');
 // ================= ЦИКЛ =================
 function tick(now){
   requestAnimationFrame(tick);
-  if(phase!=='play'){ lastT=now; return; }
+  if(phase!=='play'){ lastT=now; window.AUDIO&&window.AUDIO.step(0.016); return; }
   let dt=(now-lastT)/1000; lastT=now; if(dt<=0) return; if(dt>0.05) dt=0.05;
-  step(dt);
+  step(dt); window.AUDIO&&window.AUDIO.step(dt);
 }
 function step(dt){
   if(handedMode==='one'){
@@ -799,6 +799,9 @@ function step(dt){
   fmStep(dt);
   window.liveStep&&window.liveStep(dt);
   window.TRACES&&window.TRACES.step(dt);
+  window.LIGHTS&&window.LIGHTS.step(dt);
+  window.SPEED&&window.SPEED.step(dt);
+  window.PEDS&&window.PEDS.step(dt);
   updateHUD();
 }
 let lowShown=false;
@@ -2491,7 +2494,1216 @@ function fmUnduck(){
 })();
 
 
-fmInit(); window.liveInit&&window.liveInit(); window.SAVE&&window.SAVE.load(); window.TRACES&&window.TRACES.init(); window.SETTINGS&&window.SETTINGS.init();
+
+// ================= 🚦 ПДР-ЯДРО v0.7 (POLICE/LIGHTS/SPEED/PEDS/SIGNS/AUDIO) =================
+
+// ============================================================
+// 🐕‍🦺 ПАТРУЛЬ + ШТРАФИ (POLICE) — v0.7
+// Вставляється ІНЛАЙН у той самий <script>, що й гра (index.html).
+// Бачить глобали (money, phase, toast, speakLines, updateHUD) і модулі
+// (window.MUTED, window.SAVE.save(), window.FM.event()) — і НІЧОГО з
+// них не перевизначає. Присвоєння money=… тут міняє саме ту `let
+// money`, що й решта гри, бо модуль живе в тому самому <script>.
+//
+// Викликають цей модуль майбутні механіки (світлофори/швидкість/
+// пішоходи): window.POLICE.fine('red_light') тощо.
+//
+// Контракт: window.POLICE = { init, fine, total }
+// (+ bare fine/POLICE: window.fine === POLICE.fine, а бare `POLICE` —
+//  звичайна властивість глобального об'єкта, тому доступна і без
+//  префікса `window.` з будь-якого іншого top-level коду сторінки.)
+//
+// Тон світу (docs/UNIVERSE.md, §2 і §8): інспектор — ВВІЧЛИВИЙ пес.
+// Він не соромить і не карає заради кари — цитує пункт ПДР і зичить
+// гарної дороги. «Дорога — це повага», а не покарання.
+//
+// Дані: data/pdr_rules.json, схема { ruleId: {no,text,fine} }.
+// init() робить fetch; якщо він не вдався (offline/404/старий
+// браузер) — працює інлайн-фолбек нижче (FALLBACK_RULES), гра
+// ніколи не падає і завжди має що показати. Фолбек підмінюється
+// «на льоту»: щойно fetch довантажить дані, наступні виклики fine()
+// вже читають актуальний текст/суму з файлу (по кожному ruleId
+// окремо — часткові дані теж ок).
+//
+// Усе в try/catch. Без зовнішніх бібліотек.
+// ============================================================
+(function(){
+  'use strict';
+
+  var RULES_URL   = 'data/pdr_rules.json';
+  var LS_KEY       = 'kotik_fines';   // {count, sum} — статистика штрафів
+  var COOLDOWN_MS  = 8000;             // не частіше ніж раз на ~8с той самий ruleId
+
+  // ---------- інлайн-фолбек (кілька правил, щоб працювало завжди) ----------
+  // Синхронізовано з data/pdr_rules.json (той самий текст/суми), щоб
+  // офлайн-гравець і той, у кого fetch спрацював, бачили однакове —
+  // це саме фолбек на випадок відсутньої мережі, а не окремий контент.
+  var FALLBACK_RULES = {
+    red_light:  { no:'8.7.3 “е”; 8.10',       text:'Червоний сигнал світлофора забороняє рух — водій має зупинитися перед стоп-лінією чи знаком, а не їхати далі.', fine:350 },
+    speeding:   { no:'12.4',                   text:'У населеному пункті дозволена швидкість — не більше 50 км/год, перевищувати не можна.',                       fine:250 },
+    pedestrian: { no:'18.1',                   text:'Наближаючись до нерегульованого пішохідного переходу з пішоходами, водій повинен знизити швидкість або зупинитися й дати їм дорогу.', fine:300 },
+    seatbelt:   { no:'2.3 “в”',                text:'Водій зобов’язаний бути пристебнутим ременем безпеки і не возити пасажирів, які не пристебнуті.',             fine:150 },
+    stop_sign:  { no:'Додаток 1, знак 2.2',    text:'Знак «Проїзд без зупинки заборонено» вимагає зупинитися перед стоп-лінією (або самим знаком) і пропустити транспорт на перетинній дорозі.', fine:200 }
+  };
+
+  var rules = null;        // {ruleId:{no,text,fine}} з fetch (може бути частковим/відсутнім)
+  var lastFineAt = {};     // ruleId -> timestamp останнього штрафу (кулдаун)
+  var stats = { count:0, sum:0 };
+
+  // ---------- localStorage: лічильник штрафів (для панелі статистики) ----------
+  function loadStats(){
+    try{
+      var raw = localStorage.getItem(LS_KEY);
+      if(!raw) return;
+      var obj = JSON.parse(raw);
+      if(obj && typeof obj.count === 'number' && typeof obj.sum === 'number'){
+        stats.count = obj.count; stats.sum = obj.sum;
+      }
+    }catch(e){ /* приватний режим / битий JSON — просто граємо з нуля */ }
+  }
+  function saveStats(){
+    try{ localStorage.setItem(LS_KEY, JSON.stringify(stats)); }catch(e){}
+  }
+
+  // ---------- дані правил ----------
+  function loadRules(){
+    try{
+      fetch(RULES_URL).then(function(r){
+        if(!r || !r.ok) throw new Error('http '+(r&&r.status));
+        return r.json();
+      }).then(function(json){
+        if(json && typeof json === 'object') rules = json;
+      }).catch(function(){ /* лишаємось на FALLBACK_RULES */ });
+    }catch(e){ /* fetch недоступний узагалі — фолбек і без цього спрацює */ }
+  }
+
+  function ruleFor(ruleId){
+    if(rules && rules[ruleId]) return rules[ruleId];
+    return FALLBACK_RULES[ruleId] || null;
+  }
+
+  // ---------- головна точка входу ----------
+  // window.POLICE.fine(ruleId) — викликають модулі світлофорів/швидкості/
+  // пішоходів при порушенні. Повертає true, якщо штраф застосовано,
+  // false — якщо ruleId невідомий або спрацював кулдаун.
+  function fine(ruleId){
+    try{
+      if(!ruleId) return false;
+      // під час паузи/меню/заправки штрафи не нараховуємо (як fmStep)
+      if(typeof phase !== 'undefined' && phase !== 'play') return false;
+
+      var rule = ruleFor(ruleId);
+      if(!rule) return false; // невідомий ruleId — тихо ігноруємо, гра не падає
+
+      var now = Date.now();
+      var last = lastFineAt[ruleId] || 0;
+      if(now - last < COOLDOWN_MS) return false; // кулдаун — не спамимо тим самим штрафом
+      lastFineAt[ruleId] = now;
+
+      var amount = Math.max(0, Number(rule.fine) || 0);
+      try{
+        if(typeof money === 'number'){ money = Math.max(0, money - amount); }
+      }catch(e){}
+
+      stats.count += 1; stats.sum += amount;
+      saveStats();
+
+      var msg = '🐕‍🦺 Інспектор: '+rule.text+' (ПДР '+rule.no+'). Штраф −'+amount+' грн. Гарної дороги!';
+      try{ if(typeof toast === 'function') toast(msg); }catch(e){}
+
+      try{
+        if(!window.MUTED && typeof speakLines === 'function'){
+          speakLines(['Інспектор дорожнього руху.', rule.text+'.', 'Штраф '+amount+' гривень.', 'Гарної дороги!']);
+        }
+      }catch(e){}
+
+      try{ window.SAVE && window.SAVE.save && window.SAVE.save(); }catch(e){}
+      try{ if(typeof updateHUD === 'function') updateHUD(); }catch(e){}
+      try{ window.FM && window.FM.event && window.FM.event('fine'); }catch(e){}
+
+      return true;
+    }catch(e){ return false; }
+  }
+
+  // window.POLICE.total() -> {count, sum} — для панелі статистики
+  function total(){
+    return { count: stats.count, sum: stats.sum };
+  }
+
+  function init(){
+    try{ loadStats(); }catch(e){}
+    try{ loadRules(); }catch(e){}
+  }
+
+  window.POLICE = { init:init, fine:fine, total:total };
+  window.fine = fine; // bare-контракт: зручний виклик з модулів світлофорів/швидкості/пішоходів
+})();
+
+
+// ============================================================
+// «Світлофори» — справжні перехрестя Оболоні оживають (v0.7)
+// Для «Котик за кермом». Вставляється ІНЛАЙН у той самий класичний
+// <script>, що й основна гра — бачить її глобали й нічого з них не
+// перевизначає:
+//   map (Leaflet), car{x,y,heading,speed}, phase ('play' під час їзди),
+//   toXY(lat,lng), fromXY(x,y), dist(aLat,aLng,bLat,bLng) → м,
+//   toast(msg), updateHUD(), window.POLICE (.fine('red_light')),
+//   window.MUTED, ac(), bell(freq,t0,dur,vol)
+//
+// Дані: data/pdr.json → { lights:[[lat,lng], ...] (~40 перехресть),
+//   crossings:[...], limits:{...} }. Якщо fetch не вдався — тихий
+// фолбек: гра просто їде без світлофорів (жодного toast/помилки).
+//
+// Що робить модуль:
+//   - малює кожен світлофор як L.divIcon (кольоровий кружечок
+//     🟢/🟡/🔴 за поточною фазою) і додає на карту в init();
+//   - спільний за задумом, але зсунутий за індексом цикл фаз:
+//     зелений ~14с → жовтий ~3с → червоний ~14с. Зсув на світлофор
+//     розподілений рівномірно по всьому періоду, щоб перехрестя не
+//     блимали синхронно, як один величезний світлофор;
+//   - у step(dt) шукає найближчий до котика світлофор і, якщо той
+//     близько (<14 м), у стані «червоний» (або «жовтий» на швидкості
+//     >25) і котик їде швидше 12 км/год — фіксує проїзд на червоне:
+//     POLICE.fine('red_light') + коротке бібікання (bell, якщо не
+//     MUTED). Per-light кулдаун (довший за фазу «червоний») гарантує,
+//     що один проїзд не оштрафує двічі — навіть якщо всередині
+//     POLICE.fine() свого кулдауну раптом нема.
+//   - рендер (перефарбовування кружечків) не частіше ніж раз на
+//     ~0.3с; сканування відстані — щокадру (40 точок — це дешево).
+//
+// Контракт:
+//   window.LIGHTS.init()    — одноразово при завантаженні (fetch
+//                              pdr.json, малює маркери; тихий фолбек)
+//   window.LIGHTS.step(dt)  — виклик щокадру із step(dt) під час
+//                              phase==='play'
+// ============================================================
+(function(){
+  'use strict';
+
+  // ---------- тайминг фаз (сек) ----------
+  var GREEN_S  = 14;
+  var YELLOW_S = 3;
+  var RED_S    = 14;
+  var PERIOD_S = GREEN_S + YELLOW_S + RED_S; // 31
+
+  // ---------- детекція проїзду на червоне ----------
+  var TRIGGER_R      = 14;   // м — «на перехресті»
+  var MIN_VIOLATE_KMH = 12;  // км/год — нижче цього не штрафуємо (майже стоїть)
+  var YELLOW_RISK_KMH = 25;  // км/год — на жовтому штрафуємо тільки на такій швидкості
+  var FINE_COOLDOWN_S = 18;  // > RED_S, щоб один проїзд на червоне не дав два штрафи
+
+  // ---------- рендер ----------
+  var RENDER_EVERY_S = 0.3;
+  var EMOJI = { green:'🟢', yellow:'🟡', red:'🔴' };
+
+  var lights = [];          // [{lat,lng,offset,marker,el,lastColor,lastFineClock}]
+  var clock = 0;            // власний ігровий годинник модуля (йде лише під час step)
+  var renderAccum = 0;
+  var startedLoad = false;
+  var ready = false;        // true, коли маркери вже намальовані
+
+  // ---------- стилі кружечків (інжектимо самі, index.html не чіпаємо) ----------
+  function injectStyles(){
+    try{
+      if(document.getElementById('lightsStyles')) return;
+      var css = '.lightDot{width:22px;height:22px;display:flex;align-items:center;'+
+        'justify-content:center;font-size:15px;line-height:1;pointer-events:none;'+
+        'filter:drop-shadow(0 1px 2px rgba(0,0,0,.45));}';
+      var styleEl = document.createElement('style');
+      styleEl.id = 'lightsStyles';
+      styleEl.textContent = css;
+      document.head.appendChild(styleEl);
+    }catch(e){}
+  }
+
+  // ---------- фаза світлофора у момент часу t (з власним зсувом) ----------
+  function stateAt(offsetS, t){
+    var x = (t + offsetS) % PERIOD_S;
+    if(x < 0) x += PERIOD_S;
+    if(x < GREEN_S) return 'green';
+    if(x < GREEN_S + YELLOW_S) return 'yellow';
+    return 'red';
+  }
+
+  function makeIcon(){
+    return L.divIcon({ className:'', iconSize:[22,22], iconAnchor:[11,11],
+      html:'<div class="lightDot">🟢</div>' });
+  }
+
+  function buildLights(raw){
+    if(!Array.isArray(raw) || !raw.length) return; // тихий фолбек: нема даних — нема світлофорів
+    injectStyles();
+    var n = raw.length;
+    for(var i=0;i<n;i++){
+      var pt = raw[i];
+      if(!pt || pt.length < 2) continue;
+      var lat = +pt[0], lng = +pt[1];
+      if(!isFinite(lat) || !isFinite(lng)) continue;
+
+      var offset = (i * PERIOD_S / n) % PERIOD_S; // рівномірний зсув фази за індексом
+
+      var marker = null, el = null;
+      try{
+        marker = L.marker([lat,lng], { icon:makeIcon(), interactive:false, keyboard:false }).addTo(map);
+        var rootEl = marker.getElement ? marker.getElement() : null;
+        el = rootEl ? rootEl.querySelector('.lightDot') : null;
+      }catch(e){ continue; }
+
+      lights.push({
+        lat:lat, lng:lng, offset:offset,
+        marker:marker, el:el,
+        lastColor:'green',
+        lastFineClock:-1e9
+      });
+    }
+    ready = lights.length > 0;
+    if(ready) renderAll(clock); // одразу коректні кольори, не чекаючи першого throttle-тіку
+  }
+
+  function renderAll(t){
+    for(var i=0;i<lights.length;i++){
+      var lt = lights[i];
+      var st = stateAt(lt.offset, t);
+      if(st === lt.lastColor) continue;
+      lt.lastColor = st;
+      if(lt.el) lt.el.textContent = EMOJI[st];
+    }
+  }
+
+  function beepViolation(){
+    try{
+      if(window.MUTED) return;
+      var t = ac().currentTime;
+      bell(300, t, 0.09, 0.22);
+      bell(210, t + 0.1, 0.13, 0.2);
+    }catch(e){}
+  }
+
+  // ================= публічний контракт =================
+  function init(){
+    try{
+      if(startedLoad) return;
+      startedLoad = true;
+      fetch('data/pdr.json').then(function(r){
+        if(!r || !r.ok) throw new Error('pdr.json: bad response');
+        return r.json();
+      }).then(function(j){
+        try{ buildLights(j && j.lights); }catch(e){}
+      }).catch(function(){
+        // тихий фолбек — просто немає світлофорів, гра їде далі
+      });
+    }catch(e){
+      // тихий фолбек
+    }
+  }
+
+  function step(dt){
+    try{
+      if(!ready || !lights.length) return;
+      // step() і так викликається лише під час phase==='play' (гейт у tick()),
+      // але дублюємо перевірку — так само, як TRACES.step — про всяк випадок.
+      if(typeof phase !== 'undefined' && phase !== 'play') return;
+      if(typeof dt !== 'number' || !isFinite(dt) || dt <= 0) return;
+
+      clock += dt;
+      renderAccum += dt;
+      if(renderAccum >= RENDER_EVERY_S){
+        renderAccum = 0;
+        try{ renderAll(clock); }catch(e){}
+      }
+
+      var p = fromXY(car.x, car.y);
+      var nearestIdx = -1, nearestD = Infinity;
+      for(var i=0;i<lights.length;i++){
+        var Lg = lights[i];
+        var d = dist(p.lat, p.lng, Lg.lat, Lg.lng);
+        if(d < nearestD){ nearestD = d; nearestIdx = i; }
+      }
+      if(nearestIdx < 0) return;
+
+      if(nearestD < TRIGGER_R){
+        var target = lights[nearestIdx];
+        var st = stateAt(target.offset, clock);
+        var speedKmh = Math.abs(car.speed);
+        var violating = (st === 'red') || (st === 'yellow' && speedKmh > YELLOW_RISK_KMH);
+        if(violating && speedKmh > MIN_VIOLATE_KMH && (clock - target.lastFineClock) > FINE_COOLDOWN_S){
+          target.lastFineClock = clock;
+          try{ window.POLICE && window.POLICE.fine && window.POLICE.fine('red_light'); }catch(e){}
+          beepViolation();
+        }
+      }
+    }catch(e){}
+  }
+
+  window.LIGHTS = { init:init, step:step };
+})();
+
+
+// ============================================================
+// 🚓 SPEED — обмеження швидкості + контроль перевищення
+// Для «Котик за кермом» (Оболонь). Вставляється ІНЛАЙН у той самий
+// класичний <script>, що й основна гра — бачить її глобали
+// (CFG, car{x,y,speed}, phase, nearestRoad(x,y,name)→{svc,name,...},
+// toast, updateHUD, window.POLICE, window.MUTED, dist, fromXY) і
+// нічого з них тут не перевизначає.
+//
+// ПДР України: у населеному пункті — 50 км/год; у житловій/дворовій
+// зоні — 20 км/год (п. 3.29 «Обмеження максимальної швидкості» —
+// логіка гри: якщо найближча дорога під авто службова/двір (svc===1) →
+// ліміт 20, інакше — 50). Тон — docs/UNIVERSE.md: дорога тут повага,
+// а не заборона, тож попередження м'яке, цитатою ліміту, без сорому.
+//
+// Контракт:
+//   window.SPEED.init()   — одноразова ініціалізація (створює знак
+//                            #speedLimit у #hud; викликати один раз
+//                            після завантаження гри, коли DOM готовий)
+//   window.SPEED.step(dt) — виклик щокадру із step(dt): визначає
+//                            поточний ліміт (згладжено), оновлює HUD-
+//                            знак і рахує неперервне перевищення
+//   window.SPEED.limit()  — поточний підтверджений ліміт (число,
+//                            20 або 50) — можна читати з інших модулів
+// ============================================================
+(function(){
+  'use strict';
+
+  // ---------- налаштування ----------
+  var DEFAULT_LIMIT    = 50;   // старт: населений пункт, поки нема даних про дорогу під авто
+  var SPD_CONFIRM_SEC  = 0.5;  // скільки секунд новий "сирий" ліміт має протриматись поспіль,
+                                // щоб замінити підтверджений — анти-мигтіння на межі двір/вулиця
+  var SPD_TOLERANCE    = 10;   // км/год толеранс понад ліміт, перш ніж це вважається перевищенням
+  var SPD_WARN_SEC     = 2.0;  // секунд неперервного перевищення до першого попередження (toast)
+  var SPD_FINE_GAP_SEC = 2.0;  // ще стільки ж — до штрафу; далі, поки триває, чек-ін у POLICE
+                                // раз на SPD_FINE_GAP_SEC (сам POLICE вирішує, штрафувати чи ні —
+                                // у нього свій кулдаун, тут ми лише не спамимо викликами щокадру)
+  var SPD_HUD_THROTTLE = 0.5;  // не частіше разу на ~0.5с переписувати текст у знаку (крім змін —
+                                // ті показуються одразу, throttle лише прибирає зайві DOM-записи)
+
+  // ---------- внутрішній стан (усе з префіксом spd, щоб нічого не перетнути) ----------
+  var spdLimit        = DEFAULT_LIMIT; // підтверджений (згладжений) ліміт — те, що бачить гравець
+  var spdPendingLimit = DEFAULT_LIMIT; // "сирий" ліміт, визначений на поточному кадрі
+  var spdPendingT     = 0;             // скільки часу поспіль тримається spdPendingLimit
+
+  var spdOverT   = 0;     // секунд поспіль |car.speed| > spdLimit + SPD_TOLERANCE
+  var spdWarned  = false; // перше попередження цього епізоду перевищення вже показане
+  var spdFined   = false; // штрафна позначка цього епізоду вже спрацювала (перший чек-ін зроблено)
+  var spdFineAcc = 0;     // акумулятор для періодичних чек-інів у POLICE.fine після spdFined
+
+  var spdHudAcc  = 0;     // акумулятор для throttle HUD-рендеру
+  var spdLastTxt = null;  // останній записаний у DOM текст знаку (щоб не писати те саме дарма)
+
+  var elSign = null;
+  var spdInited = false;
+
+  // ---------- DOM / стилі ----------
+  function injectStyles(){
+    try{
+      if(document.getElementById('speedStyles')) return;
+      var css =
+        '#speedLimit{width:34px;height:34px;border-radius:50%;background:#fff;' +
+          'border:4px solid var(--red,#d93a34);color:#141414;font-weight:900;font-size:14px;' +
+          'font-family:inherit;letter-spacing:-.4px;line-height:1;' +
+          'display:flex;align-items:center;justify-content:center;' +
+          'box-shadow:0 3px 10px rgba(0,0,0,.3);flex:0 0 auto;align-self:center;}';
+      var styleEl = document.createElement('style');
+      styleEl.id = 'speedStyles';
+      styleEl.textContent = css;
+      document.head.appendChild(styleEl);
+    }catch(e){ /* без стилю знак все одно з'явиться, лише не оформлений */ }
+  }
+  function ensureDom(){
+    injectStyles();
+    elSign = document.getElementById('speedLimit');
+    if(!elSign){
+      elSign = document.createElement('div');
+      elSign.id = 'speedLimit';
+      elSign.title = 'Обмеження швидкості';
+      elSign.textContent = String(DEFAULT_LIMIT);
+      spdLastTxt = String(DEFAULT_LIMIT);
+      var hud = document.getElementById('hud');
+      if(hud) hud.appendChild(elSign); else document.body.appendChild(elSign);
+    }
+  }
+  function renderSign(){
+    try{
+      if(!elSign) return;
+      var txt = String(spdLimit);
+      if(txt !== spdLastTxt){ elSign.textContent = txt; spdLastTxt = txt; }
+    }catch(e){}
+  }
+
+  // ---------- визначення ліміту під авто ----------
+  // Дворова/службова дорога (svc===1) → 20 км/год; будь-яка інша → 50 км/год.
+  function rawLimitAt(x, y){
+    try{
+      if(typeof nearestRoad !== 'function') return null;
+      var sticky;
+      try{ sticky = (typeof car !== 'undefined' && car) ? car.roadName : undefined; }catch(e){ sticky = undefined; }
+      var r = nearestRoad(x, y, sticky);
+      if(!r) return null; // дороги ще не завантажені / авто поза сіткою — тримаємось попереднього ліміту
+      return r.svc ? 20 : 50;
+    }catch(e){ return null; }
+  }
+  function updateLimit(dt){
+    try{
+      if(typeof car === 'undefined' || !car) return;
+      var raw = rawLimitAt(car.x, car.y);
+      if(raw == null) return; // немає свіжих даних цього кадру — не чіпаємо ні pending, ні підтверджений ліміт
+
+      if(raw === spdPendingLimit) spdPendingT += dt;
+      else { spdPendingLimit = raw; spdPendingT = 0; }
+
+      // застосовуємо новий ліміт лише після того, як він "устоявся" SPD_CONFIRM_SEC поспіль —
+      // це і є згладжування, яке не дає знаку мигтіти на межі двір/вулиця
+      if(spdPendingT >= SPD_CONFIRM_SEC && spdLimit !== spdPendingLimit) spdLimit = spdPendingLimit;
+    }catch(e){}
+  }
+  function updateHud(dt){
+    try{
+      spdHudAcc += (typeof dt === 'number' && dt > 0) ? dt : 0;
+      var changed = String(spdLimit) !== spdLastTxt;
+      if(changed || spdHudAcc >= SPD_HUD_THROTTLE){
+        renderSign();
+        spdHudAcc = 0;
+      }
+    }catch(e){}
+  }
+
+  // ---------- контроль перевищення ----------
+  function resetOverspeedTimers(){
+    spdOverT = 0; spdWarned = false; spdFined = false; spdFineAcc = 0;
+  }
+  function updateEnforcement(dt){
+    try{
+      if(typeof car === 'undefined' || !car) return;
+      var speed = Math.abs(typeof car.speed === 'number' ? car.speed : 0);
+      var threshold = spdLimit + SPD_TOLERANCE;
+
+      if(speed <= threshold){
+        if(spdOverT !== 0 || spdWarned || spdFined) resetOverspeedTimers(); // швидкість у нормі — скидаємо таймери
+        return;
+      }
+
+      spdOverT += (typeof dt === 'number' && dt > 0) ? dt : 0;
+
+      if(!spdWarned && spdOverT >= SPD_WARN_SEC){
+        spdWarned = true;
+        try{ if(typeof toast === 'function') toast('🚗 Перевищення! Ліміт ' + spdLimit); }catch(e){}
+      }
+
+      var fineAt = SPD_WARN_SEC + SPD_FINE_GAP_SEC; // ще ~2с після попередження → перший штраф
+      if(spdWarned && !spdFined && spdOverT >= fineAt){
+        spdFined = true; spdFineAcc = 0;
+        try{ window.POLICE && window.POLICE.fine && window.POLICE.fine('speeding'); }catch(e){}
+      } else if(spdFined){
+        // водій і далі перевищує — не спамимо POLICE щокадру, чекінимось раз на SPD_FINE_GAP_SEC;
+        // сам POLICE вирішує (свій кулдаун), чи це справді новий штраф
+        spdFineAcc += (typeof dt === 'number' && dt > 0) ? dt : 0;
+        if(spdFineAcc >= SPD_FINE_GAP_SEC){
+          spdFineAcc = 0;
+          try{ window.POLICE && window.POLICE.fine && window.POLICE.fine('speeding'); }catch(e){}
+        }
+      }
+    }catch(e){}
+  }
+
+  // ================= КОНТРАКТ =================
+  function spdInit(){
+    try{
+      if(spdInited) return;
+      spdInited = true;
+      spdLimit = DEFAULT_LIMIT; spdPendingLimit = DEFAULT_LIMIT; spdPendingT = 0;
+      resetOverspeedTimers();
+      ensureDom();
+      renderSign();
+    }catch(e){ /* ніколи не ламаємо завантаження гри */ }
+  }
+  function spdStep(dt){
+    try{
+      if(!spdInited) ensureDom(); // захист: якщо step() викликали без init() — знак все одно з'явиться
+      if(typeof phase !== 'undefined' && phase !== 'play') return; // поза грою (меню/пауза/заправка) — не рахуємо
+      var d = (typeof dt === 'number' && dt > 0 && dt < 1) ? dt : 0.016;
+      updateLimit(d);
+      updateHud(d);
+      updateEnforcement(d);
+    }catch(e){ /* ніколи не ламаємо ігровий цикл */ }
+  }
+  function spdLimitGetter(){ return spdLimit; }
+
+  window.SPEED = { init: spdInit, step: spdStep, limit: spdLimitGetter };
+})();
+
+
+// ================= ПІШОХОДИ НА ПЕРЕХОДАХ (v0.7, PEDS) =================
+// Для «Котик за кермом» (Оболонь). Вставляється ІНЛАЙН у той самий класичний
+// <script>, що й основна гра (ANOTHER inline module, той самий патерн, що й
+// window.TRACES / window.FM / window.SETTINGS) — бачить її глобали й НІЧОГО
+// з них не перевизначає:
+//   map (Leaflet), L (глобал бібліотеки Leaflet, з якої зроблено map),
+//   car{x,y,heading,speed,...} (speed — км/год, може бути від'ємна заднім ходом,
+//     тому скрізь беремо Math.abs(car.speed)),
+//   phase (let-змінна; 'play' під час активної їзди — НЕ функція),
+//   toXY(lat,lng)->{x,y} / fromXY(x,y)->{lat,lng} (локальна рівнокутна
+//     проєкція в метрах навколо ORG — та сама, що штовхає car.x/car.y),
+//   dist(aLat,aLng,bLat,bLng) -> метри (map.distance, Leaflet-хаверсин),
+//   toast(msg), window.POLICE (може ще не існувати — викликаємо захисно),
+//   window.MUTED, ac() (AudioContext-хелпер) + bell(freq,t0,dur,vol)
+//     (bell потребує t0 у годиннику AudioContext, тому без ac() його
+//     коректно не викликати — цей самий тандем ac()+bell використовують
+//     TRACES.playHorn() і FM-модуль, тож він так само вважається "своїм"
+//     глобалом гри, хоч у ТЗ не перелічений явно).
+//
+// Рух авто в грі — компасна конвенція (0 рад = північ/+y, зростання —
+// за годинниковою стрілкою до +x): car.x += d*sin(heading); car.y += d*cos(heading).
+// Тут скрізь використовується та сама формула для будь-яких напрямків.
+//
+// Ідея: тримаємо МАЛО (≤3) активних пішоходів біля авто. Коли з'являється
+// порожній перехід поблизу курсу авто — з невеликим шансом на ньому "оживає"
+// пішохід (маркер 🚶), повільно переходить дорогу впоперек напрямку руху
+// авто (як проксі "найближчої дороги" — легка симуляція без роутингу) і
+// зникає. Якщо авто мчить повз активного пішохода занадто швидко й близько —
+// штраф (через window.POLICE, якщо є) і м'який тост-нагадування. Якщо
+// пригальмувало поряд — пішохід тихо дякує (зрідка).
+//
+// Дані: data/pdr.json -> { crossings:[[lat,lng], ...] (~95), lights:[...] }.
+// Використовуємо лише crossings. Якщо fetch не вдався або формат неочікуваний —
+// м'який фолбек: PEDS просто нічого не робить (гра лишається грою без пішоходів).
+//
+// Контракт:
+//   window.PEDS.init()   — одноразово при завантаженні: fetch('data/pdr.json'),
+//                          готує список переходів. Мережевий виклик, нічого
+//                          не блокує; при помилці — тихий фолбек (без пішоходів).
+//   window.PEDS.step(dt) — виклик щокадру (як window.TRACES.step(dt)) під час
+//                          phase==='play'. Сам собі рано виходить, якщо
+//                          phase!=='play' або дані ще не завантажились.
+//
+// Продуктивність: активних пішоходів ≤3; повний прохід по ~95 переходах —
+// не щокадру, а throttle раз на ~0.3с; усе обгорнуто в try/catch, щоб збій
+// цього модуля ніколи не заважав основному ігровому цоклу.
+// ============================================================
+window.PEDS = (function(){
+  'use strict';
+
+  // ---------- налаштування (легко підкрутити під плейтест) ----------
+  var ACTIVE_MAX          = 3;      // максимум активних пішоходів одночасно
+  var SCAN_INTERVAL_S     = 0.3;    // throttle скану переходів, сек
+  var ACTIVATE_RADIUS_M   = 90;     // "попереду/поряд" — радіус активації, м
+  var DESPAWN_RADIUS_M    = 150;    // прибираємо маркер, якщо авто відʼїхало далі, м
+  var BEHIND_TOLERANCE_M  = -20;    // проєкція на напрям авто; менше — перехід явно "позаду", пропускаємо
+  var SPAWN_CHANCE_TICK   = 0.15;   // шанс "оживити" придатний перехід за один tick скану
+  var RESPAWN_COOLDOWN_MS = 9000;   // кулдаун переходу після того, як пішохід зник (щоб не миготіло)
+  var CROSS_DUR_MIN_S     = 3.5;    // тривалість переходу дороги пішоходом, сек
+  var CROSS_DUR_MAX_S     = 5.5;
+  var CROSS_HALFW_MIN_M   = 3.2;    // половина ширини "переходу" впоперек дороги, м
+  var CROSS_HALFW_MAX_M   = 4.6;
+
+  var FINE_SPEED_KMH      = 20;     // швидкість, вище якої "не пропускаєш"
+  var FINE_DIST_M         = 15;     // на такій відстані від переходу це вже порушення
+  var THANK_SPEED_KMH     = 10;     // якщо авто повільніше — вважаємо, що гальмуєш і пропускаєш
+  var THANK_DIST_M        = 20;     // трохи ширше коло для "дякую", ніж для штрафу
+  var THANK_TOAST_CHANCE  = 0.25;   // тост "дякую" — зрідка, щоб не набридало
+
+  // ---------- стан модуля ----------
+  var crossings = [];   // [{id,lat,lng,x,y,ped:null|obj,cooldownUntil:0}]
+  var active = [];      // активні пішоходи: посилання на ped-обʼєкти
+  var scanAccum = 0;    // акумулятор часу для throttle скану
+  var ready = false;    // дані завантажено успішно (хоч би 0 переходів — все одно ready)
+
+  // ---------- ініціалізація даних ----------
+  function init(){
+    try{
+      if(typeof fetch !== 'function') return; // немає fetch — тихий фолбек, без пішоходів
+      fetch('data/pdr.json').then(function(r){
+        if(!r || !r.ok) throw new Error('pdr.json http');
+        return r.json();
+      }).then(function(d){
+        try{
+          var list = (d && Array.isArray(d.crossings)) ? d.crossings : [];
+          var out = [];
+          for(var i=0;i<list.length;i++){
+            var c = list[i];
+            if(!c || typeof c[0] !== 'number' || typeof c[1] !== 'number') continue;
+            var lat = c[0], lng = c[1];
+            var xy;
+            try{ xy = toXY(lat,lng); }catch(e){ continue; }
+            out.push({ id:i, lat:lat, lng:lng, x:xy.x, y:xy.y, ped:null, cooldownUntil:0 });
+          }
+          crossings = out;
+          ready = true;
+        }catch(e){ crossings = []; ready = true; }
+      }).catch(function(){ crossings = []; ready = true; }); // фолбек: без пішоходів, гра йде далі
+    }catch(e){ crossings = []; ready = true; }
+  }
+
+  // ---------- звук "дякую" (тихий, як TRACES.playHorn) ----------
+  function playThanks(){
+    try{
+      if(window.MUTED) return;
+      if(typeof ac !== 'function' || typeof bell !== 'function') return;
+      var t0 = ac().currentTime;
+      bell(880,  t0,      0.12, 0.10);
+      bell(1175, t0+0.09, 0.16, 0.10);
+    }catch(e){ /* звук не критичний */ }
+  }
+
+  // ---------- маркер пішохода (повністю inline-стилі, без зовн. CSS/бібліотек) ----------
+  function makeIcon(){
+    return L.divIcon({
+      className: '',
+      iconSize: [24,24],
+      iconAnchor: [12,12],
+      html: '<div style="display:flex;align-items:center;justify-content:center;'
+          + 'width:22px;height:22px;border-radius:50%;background:#ffd23f;'
+          + 'border:2px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.35);'
+          + 'font-size:13px;line-height:1">🚶</div>'
+    });
+  }
+
+  // ---------- спроба "оживити" пішохода на переході ----------
+  function spawnPed(c){
+    if(active.length >= ACTIVE_MAX) return;
+    if(c.ped) return;
+    var heading = (car && typeof car.heading === 'number') ? car.heading : 0;
+    var perp = heading + Math.PI/2; // впоперек напрямку руху авто (проксі "нормалі дороги")
+    var half = CROSS_HALFW_MIN_M + Math.random()*(CROSS_HALFW_MAX_M-CROSS_HALFW_MIN_M);
+    var dur  = CROSS_DUR_MIN_S + Math.random()*(CROSS_DUR_MAX_S-CROSS_DUR_MIN_S);
+    var sign = Math.random() < 0.5 ? -1 : 1;
+    var mk;
+    try{ mk = L.marker([c.lat, c.lng], { icon: makeIcon(), interactive:false }).addTo(map); }
+    catch(e){ return; }
+    var ped = {
+      crossing: c, marker: mk, t: 0, dur: dur, half: half, sign: sign, perp: perp,
+      fined: false, thanked: false
+    };
+    c.ped = ped;
+    active.push(ped);
+  }
+
+  function removePed(ped){
+    try{ if(ped.marker) map.removeLayer(ped.marker); }catch(e){}
+    if(ped.crossing){
+      ped.crossing.ped = null;
+      ped.crossing.cooldownUntil = Date.now() + RESPAWN_COOLDOWN_MS;
+    }
+    var idx = active.indexOf(ped);
+    if(idx >= 0) active.splice(idx,1);
+  }
+
+  // позиція пішохода: лінійна інтерполяція (зі згладжуванням) впоперек дороги,
+  // від одного краю переходу до іншого, через точку самого переходу (t=dur/2)
+  function updatePedPosition(ped){
+    var k = ped.dur > 0 ? Math.min(1, ped.t/ped.dur) : 1;
+    k = k*k*(3-2*k); // легкий smoothstep — не "важка симуляція", просто плавніше
+    var off = ped.sign * ped.half * (2*k - 1); // -half..+half
+    var dx = Math.sin(ped.perp), dy = Math.cos(ped.perp); // та сама компасна конвенція, що й у car.x/y
+    var x = ped.crossing.x + dx*off;
+    var y = ped.crossing.y + dy*off;
+    try{
+      var p = fromXY(x,y);
+      ped.marker.setLatLng([p.lat, p.lng]);
+    }catch(e){ /* якщо не вийшло — маркер лишиться на попередній позиції цього кадру */ }
+  }
+
+  // ---------- правило проїзду: штраф за "не пропускаєш" / тихе "дякую" ----------
+  function checkCarInteraction(ped, carLat, carLng, dCarToCrossing){
+    var speed = (car && typeof car.speed === 'number') ? car.speed : 0;
+    var absSpeed = Math.abs(speed);
+
+    if(!ped.fined && absSpeed > FINE_SPEED_KMH && dCarToCrossing < FINE_DIST_M){
+      ped.fined = true;
+      try{ toast('🚶 Пропускай пішохода!'); }catch(e){}
+      try{ window.POLICE && window.POLICE.fine && window.POLICE.fine('pedestrian'); }catch(e){}
+      return;
+    }
+    if(!ped.thanked && absSpeed < THANK_SPEED_KMH && dCarToCrossing < THANK_DIST_M){
+      ped.thanked = true;
+      if(Math.random() < THANK_TOAST_CHANCE){
+        try{ toast('🚶 Дякую, що пропускаєш!'); }catch(e){}
+      }
+      playThanks();
+    }
+  }
+
+  // ---------- throttled-скан переходів на предмет "оживлення" ----------
+  function scanForSpawn(carX, carY, carP){
+    if(active.length >= ACTIVE_MAX) return;
+    var heading = (car && typeof car.heading === 'number') ? car.heading : 0;
+    var hx = Math.sin(heading), hy = Math.cos(heading); // одиничний напрям руху авто (компасна конвенція)
+    var now = Date.now();
+    for(var i=0; i<crossings.length; i++){
+      if(active.length >= ACTIVE_MAX) break;
+      var c = crossings[i];
+      if(c.ped) continue;
+      if(c.cooldownUntil && now < c.cooldownUntil) continue;
+
+      // дешевий фільтр "не позаду авто" через локальні XY (ті самі метри, що й toXY/fromXY)
+      var proj = (c.x-carX)*hx + (c.y-carY)*hy;
+      if(proj < BEHIND_TOLERANCE_M) continue;
+
+      var d;
+      try{ d = dist(carP.lat, carP.lng, c.lat, c.lng); }catch(e){ continue; }
+      if(d > ACTIVATE_RADIUS_M) continue;
+
+      if(Math.random() < SPAWN_CHANCE_TICK) spawnPed(c);
+    }
+  }
+
+  // ---------- головний тик (кожен кадр під час phase==='play') ----------
+  function step(dt){
+    try{
+      if(typeof phase === 'undefined' || phase !== 'play') return;
+      if(!ready || !crossings.length) return;
+      if(typeof car === 'undefined' || typeof map === 'undefined') return;
+      if(typeof dt !== 'number' || dt <= 0) return;
+
+      var carP;
+      try{ carP = fromXY(car.x, car.y); }catch(e){ return; }
+
+      scanAccum += dt;
+      if(scanAccum >= SCAN_INTERVAL_S){
+        scanAccum = 0;
+        try{ scanForSpawn(car.x, car.y, carP); }catch(e){}
+      }
+
+      for(var i=active.length-1; i>=0; i--){
+        var ped = active[i];
+        ped.t += dt;
+        try{ updatePedPosition(ped); }catch(e){}
+
+        var d = Infinity;
+        try{ d = dist(carP.lat, carP.lng, ped.crossing.lat, ped.crossing.lng); }catch(e){}
+
+        // прибираємо далекі/завершені маркери, щоб не накопичувались
+        if(ped.t >= ped.dur || d > DESPAWN_RADIUS_M){
+          removePed(ped);
+          continue;
+        }
+        try{ checkCarInteraction(ped, carP.lat, carP.lng, d); }catch(e){}
+      }
+    }catch(e){ /* PEDS ніколи не має зламати основний ігровий цикл */ }
+  }
+
+  return { init: init, step: step };
+})();
+
+
+// ============================================================
+// 🚸 ДОРОЖНІ ЗНАКИ — НАВЧАЛЬНИЙ ШАР (SIGNS) — v0.7
+// Вставляється ІНЛАЙН у той самий <script>, що й гра «Котик за кермом»
+// (index.html). Бачить глобали лексично (той самий <script>-блок, звичайний,
+// не type=module): map (Leaflet), car, phase, toXY, fromXY, dist, toast,
+// LANDMARKS, stations, churchMarks, money, updateHUD. НІЧОГО з цього не
+// переоголошує — лише читає/мутує (money, phase — так само, як це вже
+// роблять модулі TRACES/SETTINGS/fuel-панель у цьому файлі).
+//
+// Що робить: кладе на карту 8 маркерів-бейджів реальних дорожніх знаків
+// ПДР України (коди й офіційні назви звірені з каталогом
+// KotikPDR/Data/SignsData.swift — той самий каталог, який пройшов скіл
+// pdr-sign-audit для застосунку «Котик ПДР»). Тап по бейджу → картка-оверлей
+// (перевикористані класи .overlay/.card/.cta/.paw/.hidden з index.html)
+// з назвою, кодом і поясненням. Перший тап на кожен ОКРЕМИЙ знак дає
+// разовий бонус навчання (+10 грн, тост), повторний тап — лише картка,
+// без бонуса. Прогрес «вивчених» знаків зберігається в
+// localStorage['kotik_signs_seen'] (масив кодів) і переживає перезавантаження.
+//
+// ЧЕСНІСТЬ ЛОКАЦІЙ: там, де знак прив'язаний до конкретного реального
+// об'єкта (метро, проспект, храм, АЗС) — координати взяті з наявних у грі
+// LANDMARKS / data/pois.json (реальні точки Оболоні). Там, де знак означає
+// загальний режим (житлова зона, заборона зупинки біля ТРЦ) — координата
+// підібрана вручну в межах bbox Оболоні як ЛОГІЧНЕ, а не GPS-звірене місце
+// встановлення конкретного стовпа. Точність, яка тут КРИТИЧНА і перевірена —
+// це код знака, офіційна назва і зміст пункту ПДР, а не точна GPS-точка стовпа.
+//
+// Контракт: window.SIGNS = { init }
+// ============================================================
+(function(){
+  'use strict';
+
+  var LS_SEEN = 'kotik_signs_seen';
+  var BONUS = 10;
+
+  // ---- Каталог знаків (код/назва/зміст — за чинним ПДР України) ----
+  // group керує лише кольором бейджа (не є частиною офіційних даних):
+  //   warn=попереджувальні, prio=пріоритету, proh=заборонні,
+  //   info=інформаційно-вказівні, serv=сервісу.
+  var SIGN_DATA = [
+    { code:'1.32', name:'Пішохідний перехід', group:'warn', shape:'tri', badge:'🚶',
+      lat:50.50130, lng:30.49830, near:'біля метро «Оболонь»',
+      text:'Попереджувальний знак: попереду — нерегульований пішохідний перехід. Скинь швидкість заздалегідь і будь готовий/готова пропустити пішоходів.' },
+    { code:'5.38.1', name:'Пішохідний перехід', group:'info', shape:'circ', badge:'🚸',
+      lat:50.51220, lng:30.49850, near:'біля метро «Мінська»',
+      text:'Інформаційно-вказівний знак: позначає саме місце нерегульованого пішохідного переходу. Тут пішохід має перевагу — зупинись і дай пройти.' },
+    { code:'3.29', name:'Обмеження максимальної швидкості', group:'proh', shape:'circ', badge:'50',
+      lat:50.50650, lng:30.49950, near:'на Оболонському проспекті',
+      text:'Заборонний знак: рухатися швидше за вказане число не можна. Тут — не більше 50 км/год, навіть якщо дорога здається порожньою.' },
+    { code:'2.1', name:'Дати дорогу', group:'prio', shape:'triDown', badge:'▽',
+      lat:50.51150, lng:30.51600, near:'на в’їзді до Оболонської набережної',
+      text:'Знак пріоритету: перед перехрестям треба дати дорогу транспорту, що рухається дорогою, яку ти перетинаєш. Спочатку пропусти — потім їдь.' },
+    { code:'2.3', name:'Головна дорога', group:'prio', shape:'diamond', badge:'◆',
+      lat:50.51212, lng:30.51242, near:'біля Свято-Покровського храму',
+      text:'Знак пріоритету: ти на головній дорозі — маєш перевагу проїзду на найближчих нерегульованих перехрестях.' },
+    { code:'6.7.1', name:'Автозаправні станції', group:'serv', shape:'circ', badge:'⛽',
+      lat:50.50700, lng:30.48300, near:'перед АЗС ОККО',
+      text:'Знак сервісу: попереду — автозаправна станція. Гарний момент зазирнути, якщо бак підводить.' },
+    { code:'5.34', name:'Житлова зона', group:'info', shape:'circ', badge:'🏠',
+      lat:50.51000, lng:30.50800, near:'на типовому в’їзді у двір панельок',
+      text:'Інформаційно-вказівний знак: тут діє особливий режим — не більше 20 км/год, і пішохід завжди головний. У дворі — повільно й ніжно.' },
+    { code:'3.34', name:'Зупинку заборонено', group:'proh', shape:'circ', badge:'⛔',
+      lat:50.52300, lng:30.49750, near:'біля ТРЦ Dream Town',
+      text:'Заборонний знак: тут не можна ні зупинятись, ні стояти — навіть на хвилинку. Висади чи забери пасажира трохи далі.' }
+  ];
+
+  var markers = [];
+  var seen = null;               // Set<string> кодів, що вже дали бонус
+  var elOverlay=null, elPaw=null, elTitle=null, elCode=null, elText=null, elOk=null;
+  var prevPhase='play', pausedByUs=false;
+
+  // ---- безпечні обгортки ----
+  function toastSafe(msg){ try{ if(typeof toast==='function') toast(msg); }catch(e){} }
+  function hudSafe(){ try{ if(typeof updateHUD==='function') updateHUD(); }catch(e){} }
+
+  // ---- localStorage: «вивчені» знаки ----
+  function loadSeen(){
+    var out=new Set();
+    try{
+      var raw=localStorage.getItem(LS_SEEN);
+      if(raw){ var arr=JSON.parse(raw); if(Array.isArray(arr)) arr.forEach(function(c){ out.add(String(c)); }); }
+    }catch(e){}
+    return out;
+  }
+  function saveSeen(){
+    try{ localStorage.setItem(LS_SEEN, JSON.stringify(Array.from(seen))); }catch(e){}
+  }
+  function isSeen(code){ try{ return !!seen && seen.has(code); }catch(e){ return false; } }
+  function markSeen(code){ try{ if(seen){ seen.add(code); saveSeen(); } }catch(e){} }
+
+  // ---- стилі (інжектуються самим модулем, index.html не редагується) ----
+  function injectStyles(){
+    try{
+      if(document.getElementById('signsStyles')) return;
+      var css =
+        '.sign-badge{width:26px;height:26px;display:flex;align-items:center;justify-content:center;'+
+          'font-size:12px;font-weight:800;line-height:1;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.35);'+
+          'border-radius:50%;background:#fff;}'+
+        '.sign-badge.tri{border-radius:5px;clip-path:polygon(50% 6%,4% 96%,96% 96%);padding-top:6px;box-shadow:none;}'+
+        '.sign-badge.triDown{border-radius:5px;clip-path:polygon(4% 4%,96% 4%,50% 94%);padding-bottom:6px;box-shadow:none;}'+
+        '.sign-badge.diamond{border-radius:4px;transform:rotate(45deg);}'+
+        '.sign-badge.diamond span{transform:rotate(-45deg);display:block;}'+
+        '.sign-badge.g-warn{background:#fff8dc;border:2px solid #e8442e;color:#8a2110;}'+
+        '.sign-badge.g-proh{background:#fff;border:2px solid #e8442e;color:#c0271f;}'+
+        '.sign-badge.g-prio{background:#fff;border:2px solid #e0a112;color:#8a5c05;}'+
+        '.sign-badge.g-info{background:#eaf2ff;border:2px solid #2b6fd4;color:#1c4e99;}'+
+        '.sign-badge.g-serv{background:#eafff2;border:2px solid #1a7a4f;color:#0e5c39;}'+
+        '.sign-badge.seen{opacity:.8;filter:saturate(.85);}';
+      var styleEl=document.createElement('style');
+      styleEl.id='signsStyles';
+      styleEl.textContent=css;
+      document.head.appendChild(styleEl);
+    }catch(e){}
+  }
+
+  // ---- DOM картки-оверлея (створюється один раз, лінива ініціалізація) ----
+  function ensureDom(){
+    try{
+      elOverlay=document.getElementById('signsOverlay');
+      if(!elOverlay){
+        elOverlay=document.createElement('div');
+        elOverlay.id='signsOverlay';
+        elOverlay.className='overlay hidden';
+        elOverlay.innerHTML =
+          '<div class="card">'+
+            '<div class="paw" id="signsPaw">🚦</div>'+
+            '<h1 id="signsTitle">—</h1>'+
+            '<p id="signsCode" style="color:#999;font-size:12px;margin:-8px 0 8px;">—</p>'+
+            '<p id="signsText">—</p>'+
+            '<button class="cta" id="signsOk">Зрозуміло ✅</button>'+
+          '</div>';
+        document.body.appendChild(elOverlay);
+        elOverlay.addEventListener('click', function(e){ if(e.target===elOverlay) closeCard(); });
+      }
+      elPaw=document.getElementById('signsPaw');
+      elTitle=document.getElementById('signsTitle');
+      elCode=document.getElementById('signsCode');
+      elText=document.getElementById('signsText');
+      elOk=document.getElementById('signsOk');
+      if(elOk && !elOk.__wired){ elOk.__wired=true; elOk.addEventListener('click', closeCard); }
+    }catch(e){}
+  }
+
+  // ---- відкрити/закрити картку ----
+  function openCard(sign){
+    try{
+      ensureDom();
+      if(elPaw) elPaw.textContent=sign.badge || '🚦';
+      if(elTitle) elTitle.textContent=sign.name;
+      if(elCode) elCode.textContent='Знак '+sign.code+' · '+sign.near;
+      if(elText) elText.textContent=sign.text;
+
+      var firstTime=!isSeen(sign.code);
+      if(firstTime){
+        markSeen(sign.code);
+        try{ if(typeof money==='number'){ money+=BONUS; hudSafe(); } }catch(e){}
+        toastSafe('+'+BONUS+' грн за вивчений знак 🎓 '+sign.code);
+      }
+
+      // ставимо гру на паузу на час читання картки (як фуел-панель/налаштування)
+      try{
+        if(typeof phase!=='undefined' && phase==='play'){ prevPhase='play'; phase='signs'; pausedByUs=true; }
+        else { pausedByUs=false; }
+      }catch(e){ pausedByUs=false; }
+
+      if(elOverlay) elOverlay.classList.remove('hidden');
+    }catch(e){}
+  }
+  function closeCard(){
+    try{
+      if(elOverlay) elOverlay.classList.add('hidden');
+      try{
+        if(pausedByUs && typeof phase!=='undefined' && phase==='signs'){
+          phase='play'; try{ lastT=performance.now(); }catch(e2){}
+        }
+      }catch(e){}
+      pausedByUs=false;
+    }catch(e){}
+  }
+
+  // ---- маркер-бейдж для одного знака ----
+  function signIcon(sign){
+    var cls='sign-badge g-'+sign.group+(sign.shape==='tri'?' tri':(sign.shape==='triDown'?' triDown':(sign.shape==='diamond'?' diamond':'')))+
+             (isSeen(sign.code)?' seen':'');
+    var html='<div class="'+cls+'" data-code="'+sign.code+'"><span>'+sign.badge+'</span></div>';
+    return L.divIcon({ className:'', iconSize:[26,26], iconAnchor:[13,13], html:html });
+  }
+
+  function addMarkers(){
+    try{
+      if(typeof map==='undefined' || !map || typeof L==='undefined') return;
+      SIGN_DATA.forEach(function(sign){
+        try{
+          var mk=L.marker([sign.lat,sign.lng], {icon:signIcon(sign), title:sign.code+' '+sign.name}).addTo(map);
+          mk.on('click', function(){
+            try{
+              if(typeof phase!=='undefined' && phase!=='play') return; // не лізти поверх іншого оверлея
+              openCard(sign);
+            }catch(e){}
+          });
+          markers.push({sign:sign, mk:mk});
+        }catch(e){}
+      });
+    }catch(e){}
+  }
+
+  // ---- публічний контракт ----
+  window.SIGNS = window.SIGNS || {};
+  window.SIGNS.init = function(){
+    try{
+      if(window.__signsInited) return;
+      window.__signsInited=true;
+      seen=loadSeen();
+      injectStyles();
+      ensureDom();
+      addMarkers();
+    }catch(e){}
+  };
+})();
+
+
+// ============================================================
+// 🔊 ДВИГУН МУРКОЧЕ (AUDIO) — v0.7, WebAudio, без зовнішніх бібліотек
+// ------------------------------------------------------------
+// Канон (docs/UNIVERSE.md, §4 «Звуковий пейзаж»): «...муркотіння двигуна
+// (так, двигун у цьому світі муркоче)» — тепле, тихе, не набридливе,
+// а не рев чи гуркіт.
+//
+// Бачить глобали гри й нічого з них не переоголошує:
+//   car   { speed, rpm, mode, engineRunning, ... }  — стан авто
+//   phase                                            — 'menu' | 'play' | 'pause' | ...
+//   ac()                                             — спільний AudioContext (lazy, з auto-resume)
+//   window.MUTED                                     — глобальний прапорець «звук вимкнено»
+//
+// Дизайн:
+// - Один граф на весь час життя сторінки: 2 осцилятори (sawtooth, злегка
+//   рознесені по detune) → lowpass-фільтр (тепло/приглушено) → engineGain
+//   → destination. Осцилятори СТАРТУЮТЬ РІВНО ОДИН РАЗ (buildGraph),
+//   далі лише змінюються їхні frequency/detune/gain — жодного накопичення
+//   вузлів чи повторних .start().
+// - «Муркотіння» = повільне вібрато (детюн ±неск. центів, ~4.5 Гц) на пітчі
+//   + легке тремоло гучності (~6.5 Гц) навколо базового gain. Обидва —
+//   окремі LFO, підключені як модулятори до AudioParam (сумуються з
+//   .value, який виставляється у step()), а не пересоздаються щокадру.
+// - Базова частота: у 'manual' — від car.rpm (idle..redline), інакше
+//   (автомат) — від car.speed (0..CFG.maxSpeed). Значення idle/redline/
+//   maxSpeed продубльовані тут локально (RPM_IDLE/RPM_REDLINE/SPEED_MAX),
+//   щоб модуль лишався самодостатнім і не залежав від внутрішніх ENG/CFG
+//   гри — якщо ці числа в грі зміняться, звук просто трохи розʼїдеться
+//   з тахометром, але не зламається.
+// - Гучність навмисно тиха: 0.03..0.07 (+ до ~10% тремоло), щоб муркотіння
+//   не набридало і не заважало диктору/радіо/дзвонам.
+// - AudioContext НЕ створюється і граф НЕ будується до першого виклику
+//   step() у фазі 'play' (де вже точно був жест гравця — старт гри є
+//   кліком/тапом). init() лише готує внутрішній стан модуля, без побудови
+//   аудіографа і без звернень до ac().
+// - window.MUTED глушить МИТТЄВО (без плавної інтерполяції): за один
+//   виклик step() гучність падає в 0, а не «стигне» через кілька кадрів.
+//   Коли двигун заглух або гра не в фазі 'play' — гучність теж іде до 0,
+//   але плавно (щоб не клацало), окремою (швидшою) інтерполяцією.
+//
+// Контракт: window.AUDIO = { init, step }
+// ============================================================
+(function(){
+  'use strict';
+
+  // ---- локальні «дзеркала» ігрових діапазонів (нічого зовнішнього не займають) ----
+  var RPM_IDLE    = 800;   // ~ ENG.idle в грі
+  var RPM_REDLINE = 6000;  // ~ ENG.redline в грі
+  var SPEED_MAX   = 58;    // ~ CFG.maxSpeed в грі (км/год)
+
+  var FREQ_MIN = 55,  FREQ_MAX = 130;   // Гц, базовий тон муркотіння (низько й тепло)
+  var GAIN_MIN = 0.03, GAIN_MAX = 0.07; // тихо: ледь чутне мурчання → трохи виразніше на обертах
+
+  var GAIN_RATE_UP   = 3.2;  // 1/с, швидкість наближення гучності/частоти до цілі під час руху
+  var GAIN_RATE_DOWN = 6.0;  // 1/с, швидкість плавного затихання (двигун вимкнено / не 'play')
+  var FREQ_RATE      = 3.5;  // 1/с, швидкість інтерполяції частоти
+
+  var TREMOLO_HZ    = 6.5;   // «муркотливе» тремоло гучності
+  var TREMOLO_DEPTH  = 0.10; // частка від поточного gain
+  var VIBRATO_HZ     = 4.5;  // повільне вібрато пітчу
+  var VIBRATO_CENTS  = 8;    // глибина вібрато в центах
+
+  // ---- внутрішній стан ----
+  var built       = false;  // граф уже побудований і осцилятори запущені
+  var unsupported = false;  // WebAudio недоступний / створення графа провалилось — більше не пробуємо
+  var curFreq     = FREQ_MIN;
+  var curGain     = 0;
+
+  var osc1, osc2, vibLfo, vibGain, tremLfo, tremDepth, filter, mixGain, engineGain;
+
+  function clamp01(x){ return x<0?0:(x>1?1:x); }
+
+  // Побудова аудіографа. Викликається щонайбільше один раз (guard через built/unsupported),
+  // і лише зсередини step(), коли phase==='play' — тобто вже точно після жесту гравця.
+  function buildGraph(){
+    try{
+      var a = ac();
+
+      osc1 = a.createOscillator(); osc1.type = 'sawtooth';
+      osc2 = a.createOscillator(); osc2.type = 'sawtooth'; osc2.detune.value = 6; // легкий розстрій для густоти
+
+      vibLfo  = a.createOscillator(); vibLfo.type = 'sine'; vibLfo.frequency.value = VIBRATO_HZ;
+      vibGain = a.createGain(); vibGain.gain.value = VIBRATO_CENTS; // глибина в центах
+
+      tremLfo   = a.createOscillator(); tremLfo.type = 'sine'; tremLfo.frequency.value = TREMOLO_HZ;
+      tremDepth = a.createGain(); tremDepth.gain.value = 0; // оновлюється щокадру в step()
+
+      filter = a.createBiquadFilter(); filter.type = 'lowpass'; filter.Q.value = 0.4;
+      filter.frequency.value = FREQ_MIN * 2.6 + 60;
+
+      mixGain    = a.createGain(); mixGain.gain.value = 0.5; // сума двох осциляторів, щоб не клипало
+      engineGain = a.createGain(); engineGain.gain.value = 0; // стартуємо в тиші
+
+      osc1.connect(mixGain); osc2.connect(mixGain);
+      mixGain.connect(filter);
+      filter.connect(engineGain);
+      engineGain.connect(a.destination);
+
+      vibLfo.connect(vibGain);
+      vibGain.connect(osc1.detune);
+      vibGain.connect(osc2.detune);
+
+      tremLfo.connect(tremDepth);
+      tremDepth.connect(engineGain.gain); // додається до engineGain.gain.value, який виставляємо в step()
+
+      osc1.frequency.value = curFreq;
+      osc2.frequency.value = curFreq;
+
+      osc1.start(); osc2.start(); vibLfo.start(); tremLfo.start();
+
+      built = true;
+    }catch(e){
+      built = false;
+      unsupported = true; // WebAudio недоступний у цьому середовищі — більше не пробуємо щокадру
+    }
+  }
+
+  // Цільові частота/гучність муркотіння для поточного стану авто.
+  // 'manual' → від car.rpm (idle..redline); інакше (автомат) → від car.speed (0..maxSpeed).
+  function computeTarget(){
+    var t;
+    if(car.mode === 'manual'){
+      var rpm = car.rpm || 0;
+      t = clamp01((rpm - RPM_IDLE) / (RPM_REDLINE - RPM_IDLE));
+    } else {
+      var spd = Math.abs(car.speed || 0);
+      t = clamp01(spd / SPEED_MAX);
+    }
+    return {
+      freq: FREQ_MIN + (FREQ_MAX - FREQ_MIN) * t,
+      gain: GAIN_MIN + (GAIN_MAX - GAIN_MIN) * t
+    };
+  }
+
+  // init(): лише готує стан модуля. НІЧОГО не створює в WebAudio і НЕ звертається до ac() —
+  // граф і осцилятори будуються лізі, зсередини step(), коли гра вже в фазі 'play'
+  // (тобто вже точно після жесту гравця, наприклад кліку «Поїхали»/«Завести»).
+  function init(){
+    try{
+      built = false;
+      unsupported = false;
+      curFreq = FREQ_MIN;
+      curGain = 0;
+    }catch(e){}
+  }
+
+  // step(dt): викликати щокадру (dt у секундах), незалежно від того, чи phase==='play' —
+  // саме так модуль може плавно приглушити муркотіння, коли гра ставиться на паузу
+  // чи повертається в меню, а не «застрягти» на останній гучності.
+  function step(dt){
+    try{
+      if(typeof car === 'undefined' || !car || typeof phase === 'undefined') return;
+      dt = (typeof dt === 'number' && isFinite(dt) && dt > 0) ? Math.min(dt, 0.1) : 0;
+
+      // window.MUTED глушить МИТТЄВО — без плавної інтерполяції.
+      if(window.MUTED){
+        curGain = 0;
+        if(built){ engineGain.gain.value = 0; tremDepth.gain.value = 0; }
+        return;
+      }
+
+      var playing = (phase === 'play');
+
+      // Ще ніколи не грали (граф не побудований) і зараз не в грі — робити нічого,
+      // AudioContext і осцилятори не створюємо завчасно (без жесту гравця).
+      if(!playing && !built) return;
+
+      if(playing && !built && !unsupported) buildGraph();
+      if(!built) return; // WebAudio недоступний у цьому браузері — тихо виходимо
+
+      ac(); // сам ac() резюмить AudioContext, якщо він 'suspended' (напр. після сну вкладки)
+
+      var running = playing && !!car.engineRunning;
+      var target = running ? computeTarget() : { freq: curFreq, gain: 0 };
+      var gainRate = running ? GAIN_RATE_UP : GAIN_RATE_DOWN;
+
+      curGain += (target.gain - curGain) * Math.min(1, dt * gainRate);
+      curFreq += (target.freq - curFreq) * Math.min(1, dt * FREQ_RATE);
+      if(curGain < 0.0005) curGain = 0;
+
+      osc1.frequency.value = curFreq;
+      osc2.frequency.value = curFreq;
+      filter.frequency.value = curFreq * 2.6 + 60; // трохи яскравіше на вищих обертах/швидкості
+
+      engineGain.gain.value = curGain;
+      tremDepth.gain.value = curGain * TREMOLO_DEPTH;
+    }catch(e){
+      // WebAudio недоступний / інша похибка середовища — гра просто лишається без муркотіння
+    }
+  }
+
+  window.AUDIO = { init: init, step: step };
+})();
+
+
+
+fmInit(); window.liveInit&&window.liveInit(); window.SAVE&&window.SAVE.load(); window.TRACES&&window.TRACES.init(); window.SETTINGS&&window.SETTINGS.init(); window.POLICE&&window.POLICE.init(); window.LIGHTS&&window.LIGHTS.init(); window.SPEED&&window.SPEED.init(); window.PEDS&&window.PEDS.init(); window.SIGNS&&window.SIGNS.init(); window.AUDIO&&window.AUDIO.init();
 
 // ================= ЗАВАНТАЖЕННЯ ДАНИХ =================
 Promise.all([ fetch('data/roads.json').then(r=>r.json()), fetch('data/pois.json').then(r=>r.json()) ])
