@@ -51,13 +51,13 @@
   #street span{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
   /* банер завдання / підказки */
-  #banner{ position:absolute; top:52px; left:8px; right:8px; z-index:9; pointer-events:none; display:flex; justify-content:center; }
+  #banner{ position:absolute; top: calc(88px + env(safe-area-inset-top)); left:8px; right:8px; z-index:9; pointer-events:none; display:flex; justify-content:center; }
   #banner .msg{ background:var(--accent); color:#3a2a05; font-weight:700; font-size:13px; padding:8px 14px;
      border-radius:14px; text-align:center; max-width:92%; box-shadow:0 6px 18px rgba(0,0,0,.3); opacity:0; transition:opacity .3s; }
   #banner .msg.show{ opacity:1; }
 
   /* права колонка дій */
-  #actions{ position:absolute; right:8px; top:96px; z-index:10; display:flex; flex-direction:column; gap:8px; }
+  #actions{ position:absolute; right: calc(8px + env(safe-area-inset-right)); top: calc(104px + env(safe-area-inset-top)); z-index:10; display:flex; flex-direction:column; gap:8px; }
   .act{ pointer-events:auto; width:52px; height:52px; border:none; border-radius:14px; background:rgba(20,22,26,.8);
         color:#fff; font-size:22px; box-shadow:0 3px 10px rgba(0,0,0,.3); }
   .act:active{ transform:scale(.92); }
@@ -85,7 +85,7 @@
   #gas{ width:92px; height:100px; background:var(--green); font-size:15px; }
 
   /* ручне керування (механіка) */
-  #manualCtl{ position:absolute; left:0; right:0; bottom:120px; z-index:11; display:flex; justify-content:center; gap:8px; pointer-events:none; }
+  #manualCtl{ position:absolute; left:0; right:0; bottom: calc(135px + env(safe-area-inset-bottom)); z-index:11; display:flex; justify-content:center; gap:8px; pointer-events:none; }
   #manualCtl.hidden{ display:none; }
   .mbtn{ pointer-events:auto; touch-action:none; border:none; color:#fff; font-weight:800; border-radius:14px;
          background:rgba(20,22,26,.86); box-shadow:0 3px 10px rgba(0,0,0,.32); display:flex; align-items:center; justify-content:center; }
@@ -134,8 +134,8 @@
   #radioBtn:active{ transform:translateX(-50%) scale(.95); }
 
   /* міні-плеєр YouTube (радіо «Сенс» — офіційний embed) */
-  #ytBox{ position:absolute; left:50%; bottom:118px; transform:translateX(-50%); z-index:26;
-    width:min(92vw,380px); background:#15171c; border-radius:16px; overflow:hidden;
+  #ytBox{ position:absolute; left:8px; right:auto; bottom:118px; transform:none; z-index:26;
+    width:min(80vw,320px); background:#15171c; border-radius:16px; overflow:hidden;
     box-shadow:0 14px 44px rgba(0,0,0,.5); }
   #ytBox.hidden{ display:none; }
   #ytHead{ display:flex; align-items:center; justify-content:space-between; padding:8px 12px;
@@ -355,6 +355,12 @@ const LANDMARKS = [
 ];
 
 // ================= КАРТА =================
+// N4: Leaflet міг не завантажитись (CDN впав) — без цього гравець просто
+// зависає на «Завантаження…» без пояснення.
+if(typeof L==='undefined'){
+  try{ var _ln=document.getElementById('loadNote'); if(_ln) _ln.textContent='Не вдалось завантажити карту (перевір інтернет).'; }catch(e){}
+  throw new Error('no leaflet');
+}
 const canvasR = L.canvas({ padding: 0.4 });
 const map = L.map('map', { center: CFG.center, zoom: CFG.zoom, zoomControl:false, attributionControl:false,
   dragging:false, scrollWheelZoom:false, doubleClickZoom:false, boxZoom:false, keyboard:false,
@@ -380,6 +386,7 @@ const input={ left:false, right:false, gas:false, brake:false, clutch:false };
 let selectedMode='auto';
 let handedMode='two', steerTarget=0, steerActive=false, steerStartX=0, cruiseSet=40;
 let curLanes=1;
+let lastRoadHit=null; // кеш результату nearestRoad() цього кадру (дедуп — SPEED читає це замість повторного виклику)
 function laneChange(dir){ // -1 = лівіше (до осі), +1 = правіше (до узбіччя)
   if(!roadsOnly || curLanes<2) return;
   const old=car.lane;
@@ -539,6 +546,7 @@ function synthRadio(type){
   else { churchBells(); setTimeout(()=>{ if(radio.on&&radio.type==='church'){ if(!speakLines(RADIO_TEXT.church)) toast('📻 '+RADIO_TEXT.church[0]); } },4200); }
 }
 function startRadio(type){
+  if(window.MUTED) return; // G4: при вимкненому звуці радіо не запускаємо (ні YouTube, ні mp3)
   stopRadio(); radio.on=true; radio.type=type;
   document.getElementById('radioBtn').classList.add('on');
   document.getElementById('radioBtn').textContent='📻 Вимкнути';
@@ -579,10 +587,11 @@ if('speechSynthesis' in window){ speechSynthesis.getVoices(); speechSynthesis.on
 const MP_BROKERS=['wss://broker.emqx.io:8084/mqtt','wss://broker.hivemq.com:8884/mqtt'];
 let mpEnabled=false;
 const mp={on:false,client:null,id:'k'+Math.random().toString(36).slice(2,9),
-          nick:'Котик',room:'obolon',ghosts:new Map(),pubT:null,brokerIdx:0,base:''};
+          nick:'Котик',room:'obolon',ghosts:new Map(),pubT:null,pruneT:null,brokerIdx:0,base:''};
 function hueOf(id){ let h=0; for(const ch of id) h=(h*31+ch.charCodeAt(0))%360; return h; }
+function esc(s){ return String(s).replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
 function ghostIcon(n,hue){ return L.divIcon({className:'',iconSize:[40,46],iconAnchor:[20,23],
-  html:`<div style="text-align:center"><div style="font-size:9px;font-weight:800;background:rgba(20,22,26,.85);color:#fff;border-radius:6px;padding:1px 5px;margin-bottom:1px;white-space:nowrap;max-width:64px;overflow:hidden">${n}</div><div style="width:16px;height:26px;margin:0 auto;background:hsl(${hue},85%,55%);border-radius:6px 6px 7px 7px;border:2px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.4)"></div></div>`}); }
+  html:`<div style="text-align:center"><div style="font-size:9px;font-weight:800;background:rgba(20,22,26,.85);color:#fff;border-radius:6px;padding:1px 5px;margin-bottom:1px;white-space:nowrap;max-width:64px;overflow:hidden">${esc(n)}</div><div style="width:16px;height:26px;margin:0 auto;background:hsl(${hue},85%,55%);border-radius:6px 6px 7px 7px;border:2px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.4)"></div></div>`}); }
 function mpStart(){
   if(!window.mqtt){ toast('👥 Мультиплеєр недоступний (не завантажився mqtt)'); return; }
   mp.nick=(document.getElementById('mpNick').value.trim()||'Котик').slice(0,12);
@@ -590,12 +599,13 @@ function mpStart(){
   try{ localStorage.setItem('mpNick',mp.nick); localStorage.setItem('mpRoom',mp.room); }catch(_){ }
   mp.base='kotikobolon/'+mp.room;
   connectBroker();
-  clearInterval(mp.pubT);
+  clearInterval(mp.pubT); clearInterval(mp.pruneT);
   mp.pubT=setInterval(()=>{ if(mp.on && phase==='play' && mp.client && mp.client.connected){
     mp.client.publish(mp.base+'/pos', JSON.stringify({id:mp.id,n:mp.nick,x:+car.x.toFixed(1),y:+car.y.toFixed(1)})); } },150);
-  setInterval(mpPrune,2000);
+  mp.pruneT=setInterval(mpPrune,2000);
 }
 function connectBroker(){
+  if(mp.client) return; // не перестворювати клієнт, якщо вже є (у т.ч. під час реконекту)
   const url=MP_BROKERS[mp.brokerIdx%MP_BROKERS.length];
   try{ mp.client=mqtt.connect(url,{clientId:'kotik_'+mp.id,keepalive:30,connectTimeout:6000,
     will:{topic:mp.base+'/leave',payload:JSON.stringify({id:mp.id}),qos:0,retain:false}}); }
@@ -606,10 +616,16 @@ function connectBroker(){
   mp.client.on('message',(t,msg)=>{ try{ const d=JSON.parse(msg.toString());
     if(!d.id || d.id===mp.id) return;
     if(t.endsWith('/leave')){ mpDrop(d.id); return; }
+    if(typeof d.x!=='number' || typeof d.y!=='number') return;
     mpGhost(d); }catch(_){ } });
   mp.client.on('error',()=>{ if(!mp.on){ try{mp.client.end(true);}catch(_){ }
+    mp.client=null; // дозволяє connectBroker() перестворити клієнт для наступного брокера
     mp.brokerIdx++; if(mp.brokerIdx<MP_BROKERS.length) connectBroker();
     else toast('👥 Брокер недоступний — мультиплеєр вимкнено'); } });
+  try{
+    mp.client.on('close',()=>{ mp.on=false; updateMpChip(); });
+    mp.client.on('offline',()=>{ mp.on=false; });
+  }catch(e){}
 }
 function mpStop(){ if(mp.client){ try{ mp.client.publish(mp.base+'/leave',JSON.stringify({id:mp.id})); mp.client.end(true); }catch(_){ } }
   mp.client=null; mp.on=false; clearInterval(mp.pubT);
@@ -673,38 +689,58 @@ let bannerT;
 function toast(msg){ const b=document.getElementById('bannerMsg'); b.textContent=msg; b.classList.add('show');
   clearTimeout(bannerT); bannerT=setTimeout(()=>b.classList.remove('show'),3400); }
 function updateHUD(){
-  document.getElementById('money').textContent=Math.round(money);
-  document.getElementById('speed').textContent=Math.round(Math.abs(car.speed));
-  const pct=Math.max(0,Math.min(1,fuel/CFG.tank));
-  const bar=document.getElementById('fuelBar'); bar.style.width=(pct*100)+'%';
-  bar.style.background = pct<0.15?'#d93a34':(pct<0.3?'#e8a33a':'#2eb35c');
-  document.getElementById('range').textContent=Math.round(rangeKm());
-  if(car.mode==='manual'){
-    document.getElementById('gearVal').textContent=car.gearDisp||'N';
-    const rp=Math.max(0,Math.min(1,(car.rpm||0)/ENG.redline));
-    const rb=document.getElementById('rpmBar'); rb.style.width=(rp*100)+'%';
-    rb.style.background=(car.rpm>ENG.redline)?'#d93a34':(car.rpm>ENG.redline*0.85?'#e8a33a':'#2b7fd4');
-    document.getElementById('gearChip').classList.toggle('stall', !car.engineRunning);
-  }
+  try{
+    const moneyTxt=String(Math.round(money));
+    if(hudCache.money!==moneyTxt){ hudCache.money=moneyTxt; document.getElementById('money').textContent=moneyTxt; }
+    const speedTxt=String(Math.round(Math.abs(car.speed)));
+    if(hudCache.speed!==speedTxt){ hudCache.speed=speedTxt; document.getElementById('speed').textContent=speedTxt; }
+    const pct=Math.max(0,Math.min(1,fuel/CFG.tank));
+    const widthTxt=(pct*100)+'%';
+    const bgTxt = pct<0.15?'#d93a34':(pct<0.3?'#e8a33a':'#2eb35c');
+    if(hudCache.fuelW!==widthTxt || hudCache.fuelBg!==bgTxt){
+      const bar=document.getElementById('fuelBar');
+      if(hudCache.fuelW!==widthTxt){ bar.style.width=widthTxt; hudCache.fuelW=widthTxt; }
+      if(hudCache.fuelBg!==bgTxt){ bar.style.background=bgTxt; hudCache.fuelBg=bgTxt; }
+    }
+    const rangeTxt=String(Math.round(rangeKm()));
+    if(hudCache.range!==rangeTxt){ hudCache.range=rangeTxt; document.getElementById('range').textContent=rangeTxt; }
+    if(car.mode==='manual'){
+      const gearTxt=car.gearDisp||'N';
+      if(hudCache.gear!==gearTxt){ hudCache.gear=gearTxt; document.getElementById('gearVal').textContent=gearTxt; }
+      const rp=Math.max(0,Math.min(1,(car.rpm||0)/ENG.redline));
+      const rpmWTxt=(rp*100)+'%';
+      const rpmBgTxt=(car.rpm>ENG.redline)?'#d93a34':(car.rpm>ENG.redline*0.85?'#e8a33a':'#2b7fd4');
+      if(hudCache.rpmW!==rpmWTxt || hudCache.rpmBg!==rpmBgTxt){
+        const rb=document.getElementById('rpmBar');
+        if(hudCache.rpmW!==rpmWTxt){ rb.style.width=rpmWTxt; hudCache.rpmW=rpmWTxt; }
+        if(hudCache.rpmBg!==rpmBgTxt){ rb.style.background=rpmBgTxt; hudCache.rpmBg=rpmBgTxt; }
+      }
+      const stallOn=!car.engineRunning;
+      if(hudCache.stall!==stallOn){ hudCache.stall=stallOn; document.getElementById('gearChip').classList.toggle('stall', stallOn); }
+    }
+  }catch(e){}
 }
 
 // контекстна кнопка (АЗС / церква)
 let ctxAction=null;
+function setCtxBtn(btn,txt,disp){
+  if(hudCache.ctxTxt!==txt){ hudCache.ctxTxt=txt; btn.textContent=txt; }
+  if(hudCache.ctxDisp!==disp){ hudCache.ctxDisp=disp; btn.style.display=disp; }
+}
 function updateCtx(lat,lng){
   const btn=document.getElementById('ctx');
   // заглухлий двигун (механіка) — завести
   if(car.mode==='manual' && !car.engineRunning && Math.abs(car.speed)<8){
-    btn.textContent='🔑 Завести двигун'; ctxAction=startEngine; btn.style.display='block'; return;
+    setCtxBtn(btn,'🔑 Завести двигун','block'); ctxAction=startEngine; return;
   }
   // АЗС
   let near=null;
   for(const s of stations){ if(dist(lat,lng,s.lat,s.lng)<CFG.arrive){ near={type:'fuel',s}; break; } }
   if(!near) for(const c of churchMarks){ if(dist(lat,lng,c.lat,c.lng)<CFG.arrive){ near={type:'church',c}; break; } }
   if(near && Math.abs(car.speed)<8){
-    if(near.type==='fuel'){ btn.textContent='⛽ Заправитись'; ctxAction=()=>openFuel(near.s); }
-    else{ const ready=churchCd<=0; btn.textContent=ready?'⛪ Зайти до храму':'⛪ Вже сьогодні'; ctxAction=ready?visitChurch:null; }
-    btn.style.display='block';
-  } else { btn.style.display='none'; ctxAction=null; }
+    if(near.type==='fuel'){ setCtxBtn(btn,'⛽ Заправитись','block'); ctxAction=()=>openFuel(near.s); }
+    else{ const ready=churchCd<=0; setCtxBtn(btn, ready?'⛪ Зайти до храму':'⛪ Вже сьогодні','block'); ctxAction=ready?visitChurch:null; }
+  } else { setCtxBtn(btn,hudCache.ctxTxt||'','none'); ctxAction=null; }
 }
 function visitChurch(){ if(churchCd>0) return; money+=CFG.churchBonus; blessing=1; churchCd=CFG.churchCooldownSec;
   toast(`🙏 +${CFG.churchBonus} грн · Благословення дороги (−15% пального)`); fmEvent('church'); window.SAVE&&window.SAVE.save(); }
@@ -760,6 +796,7 @@ function step(dt){
   // режим «лише по дорогах» — м'яко притягуємо до найближчої дороги + вирівнюємо курс
   if(roadsOnly){
     const r=nearestRoad(car.x,car.y, car.roadName);
+    lastRoadHit=r||null;
     if(r){
       car.roadName=r.name;
       // напрям руху вздовж дороги (з двох — ближчий до курсу)
@@ -783,7 +820,7 @@ function step(dt){
       const nm = r.name || (r.svc ? 'двір · проїзд' : '—');
       streetName(nm + (lanes>1 && !r.svc ? ` · смуга ${car.lane+1}/${lanes}` : ''));
     }
-  } else { curLanes=1; streetName('вільний режим'); }
+  } else { curLanes=1; lastRoadHit=null; streetName('вільний режим'); }
 
   // паливо / бонуси / кулдауни
   if(Math.abs(car.speed)>0.5) useFuel(Math.abs(distM)); else if(car.engineRunning) fuel=Math.max(0,fuel-CFG.idleLh/3600*dt);
@@ -807,6 +844,7 @@ function step(dt){
 let lowShown=false;
 function toastLowFuelMaybe(){ if(!lowShown && fuel<=0){ lowShown=true; toast('⛽ Пусто! Дійди пішки або заправся.'); fmEvent('lowFuel'); } }
 let curStreet='';
+let hudCache={}; // кеш останніх записаних значень DOM у updateHUD/updateCtx — пишемо лише коли змінилось
 function streetName(n){ if(n!==curStreet){ curStreet=n; document.getElementById('street').firstElementChild.textContent=n||'—'; } }
 requestAnimationFrame(tick);
 
@@ -925,12 +963,14 @@ function initGame(){ if(handedMode==='one') selectedMode='auto';
 function startGame(){ initGame(); window.SAVE&&window.SAVE.applyRestore(); car.engineRunning=true; car.belt=true;   // швидкий старт (фолбек/тест)
   if(mpEnabled && !mp.on) mpStart();
   document.getElementById('startScreen').classList.add('hidden'); document.getElementById('seq').classList.add('hidden');
-  phase='play'; lastT=performance.now(); window.applyHanded&&window.applyHanded(); }
+  phase='play'; lastT=performance.now(); window.applyHanded&&window.applyHanded();
+  try{ var _a=document.getElementById('actions'); if(_a) _a.style.display=''; }catch(e){} }
 function startSequence(){ initGame();
   if(mpEnabled && !mp.on) mpStart();
   document.getElementById('startScreen').classList.add('hidden');
   const p=fromXY(0,0); map.setView([p.lat,p.lng],CFG.zoom,{animate:false});
-  phase='sequence'; seqIdx=0; document.getElementById('seq').classList.remove('hidden'); runSeqStep(); }
+  phase='sequence'; seqIdx=0; document.getElementById('seq').classList.remove('hidden'); runSeqStep();
+  try{ var _a=document.getElementById('actions'); if(_a) _a.style.display='none'; }catch(e){} }
 function runSeqStep(){
   if(seqIdx>=SEQ.length){ finishSequence(); return; }
   const s=SEQ[seqIdx];
@@ -953,6 +993,7 @@ function renderSeqList(){ const items=SEQ.map((s,i)=>({s,i})).filter(o=>o.s.tap)
     return `<span class="it ${cls}">${o.s.short}</span>`; }).join(''); }
 function finishSequence(){ window.SAVE&&window.SAVE.applyRestore(); document.getElementById('seq').classList.add('hidden');
   car.engineRunning=true; phase='play'; lastT=performance.now(); window.applyHanded&&window.applyHanded();
+  try{ var _a=document.getElementById('actions'); if(_a) _a.style.display=''; }catch(e){}
   if(car.mode==='manual'){ car.gear=1;
     toast('🔧 Механіка: тримай 🖐 Зчеплення, дай Газ — і плавно відпусти зчеплення. Інакше заглухне!'); }
   else toast('🚗 Поїхали! Ремінь пристебнуто, двигун працює.'); }
@@ -1928,9 +1969,27 @@ function fmUnduck(){
   function isMine(id){ return !!(mineMap && Object.prototype.hasOwnProperty.call(mineMap,id)); }
 
   // ---------- забрані кави (щоб не забрати двічі) ----------
+  // M3: масив інакше росте назавжди — відкидаємо застарілі id (>3 доби; кава й так
+  // живе лише 2 доби, тож 3 — надійний запас) і підстраховуємось лімітом розміру.
+  var CLAIMED_MAX_AGE_MS = 3*DAY_MS;
+  var CLAIMED_MAX_COUNT  = 200;
+  function claimedIdAgeMs(id){
+    try{
+      if(typeof id!=='string' || id.slice(0,2)!=='tr' || id.length<=8) return null;
+      var t36 = id.slice(2, id.length-6);
+      var t = parseInt(t36, 36);
+      if(!isFinite(t) || t<=0) return null;
+      return Date.now() - t;
+    }catch(e){ return null; }
+  }
   function loadClaimed(){
     var arr = loadJSON(LS_COFFEE_CLAIMED, []);
     if(!Array.isArray(arr)) arr=[];
+    arr = arr.filter(function(id){
+      var age = claimedIdAgeMs(id);
+      return age===null ? true : age <= CLAIMED_MAX_AGE_MS; // невпізнаний формат — лишаємо, покладаємось на ліміт розміру нижче
+    });
+    if(arr.length > CLAIMED_MAX_COUNT) arr = arr.slice(arr.length - CLAIMED_MAX_COUNT);
     return new Set(arr);
   }
   function saveClaimed(){ try{ saveJSON(LS_COFFEE_CLAIMED, Array.from(claimedSet)); }catch(e){} }
@@ -2012,12 +2071,13 @@ function fmUnduck(){
     var id = topic.slice(TOPIC_BASE.length);
     if(!id) return;
     var raw = payloadBuf ? payloadBuf.toString() : '';
-    if(!raw){ removeTraceMarker(id); tracesById.delete(id); return; }
+    if(!raw){ removeTraceMarker(id); tracesById.delete(id); heardHello.delete(id); return; }
+    if(raw.length>4096){ return; } // публічний retained-топік — захист від велетенського сміття
     var d;
     try{ d=JSON.parse(raw); }catch(e){ return; }
     if(!d || !d.id || !TYPES[d.type] || typeof d.x!=='number' || typeof d.y!=='number') return;
     if(d.exp && Date.now() > d.exp){
-      removeTraceMarker(id); tracesById.delete(id);
+      removeTraceMarker(id); tracesById.delete(id); heardHello.delete(id);
       if(isMine(id)) clearOwnTrace(id);
       return;
     }
@@ -2042,6 +2102,19 @@ function fmUnduck(){
       }
     }
     if(changed) saveMine();
+  }
+
+  // M1: чужі сліди прострочуються тим самим exp, але їх ніхто локально не прибирав —
+  // без цього tracesById/heardHello ростуть, доки хтось не опублікує порожній payload.
+  function pruneForeignExpired(){
+    try{
+      var now = Date.now();
+      tracesById.forEach(function(t, id){
+        if(t && t.data && t.data.exp && now > t.data.exp){
+          removeTraceMarker(id); tracesById.delete(id); heardHello.delete(id);
+        }
+      });
+    }catch(e){}
   }
 
   // ================= маркери на карті =================
@@ -2345,6 +2418,7 @@ function fmUnduck(){
         proxAccum = 0;
         checkProximity();
         pruneOwnExpired();
+        pruneForeignExpired();
       }
     }catch(e){}
   };
@@ -2357,6 +2431,8 @@ function fmUnduck(){
       if(!val){
         closeMenu();
         disconnectMqtt();
+      } else {
+        mqttUnavailable=false; // дає тумблеру відновити фічу після мережевого збою
       }
       applyEnabledVisual();
       if(val) ensureConnected();
@@ -2385,7 +2461,10 @@ function fmUnduck(){
 
   function setMuted(v){
     try{ window.MUTED = !!v; localStorage.setItem(LS_MUTED, v ? '1':'0');
-      if(v){ try{ if(typeof speechSynthesis!=='undefined') speechSynthesis.cancel(); }catch(e){} }
+      if(v){
+        try{ if(typeof speechSynthesis!=='undefined') speechSynthesis.cancel(); }catch(e){}
+        try{ if(typeof stopRadio==='function') stopRadio(); }catch(e){}
+      }
     }catch(e){ window.MUTED = !!v; }
   }
 
@@ -2583,10 +2662,12 @@ function fmUnduck(){
   }
 
   // ---------- головна точка входу ----------
-  // window.POLICE.fine(ruleId) — викликають модулі світлофорів/швидкості/
-  // пішоходів при порушенні. Повертає true, якщо штраф застосовано,
-  // false — якщо ruleId невідомий або спрацював кулдаун.
-  function fine(ruleId){
+  // window.POLICE.fine(ruleId, key) — викликають модулі світлофорів/швидкості/
+  // пішоходів при порушенні. key (необов'язковий) робить кулдаун per-instance —
+  // напр. окремий світлофор чи перехід, щоб два різних реальних порушення
+  // того самого типу за COOLDOWN_MS не гасили одне одного. Повертає true,
+  // якщо штраф застосовано, false — якщо ruleId невідомий або спрацював кулдаун.
+  function fine(ruleId, key){
     try{
       if(!ruleId) return false;
       // під час паузи/меню/заправки штрафи не нараховуємо (як fmStep)
@@ -2595,10 +2676,11 @@ function fmUnduck(){
       var rule = ruleFor(ruleId);
       if(!rule) return false; // невідомий ruleId — тихо ігноруємо, гра не падає
 
+      var cdKey = ruleId + (key!=null ? (':'+key) : '');
       var now = Date.now();
-      var last = lastFineAt[ruleId] || 0;
+      var last = lastFineAt[cdKey] || 0;
       if(now - last < COOLDOWN_MS) return false; // кулдаун — не спамимо тим самим штрафом
-      lastFineAt[ruleId] = now;
+      lastFineAt[cdKey] = now;
 
       var amount = Math.max(0, Number(rule.fine) || 0);
       try{
@@ -2708,7 +2790,7 @@ function fmUnduck(){
       if(document.getElementById('lightsStyles')) return;
       var css = '.lightDot{width:22px;height:22px;display:flex;align-items:center;'+
         'justify-content:center;font-size:15px;line-height:1;pointer-events:none;'+
-        'filter:drop-shadow(0 1px 2px rgba(0,0,0,.45));}';
+        'box-shadow:0 2px 4px rgba(0,0,0,.4);}';
       var styleEl = document.createElement('style');
       styleEl.id = 'lightsStyles';
       styleEl.textContent = css;
@@ -2749,8 +2831,13 @@ function fmUnduck(){
         el = rootEl ? rootEl.querySelector('.lightDot') : null;
       }catch(e){ continue; }
 
+      // G1: кешуємо XY одразу — step() рахує пеленг «світлофор попереду авто»
+      // без повторних перетворень щокадру.
+      var xy = null;
+      try{ xy = toXY(lat,lng); }catch(e){}
+
       lights.push({
-        lat:lat, lng:lng, offset:offset,
+        lat:lat, lng:lng, x: xy?xy.x:0, y: xy?xy.y:0, offset:offset,
         marker:marker, el:el,
         lastColor:'green',
         lastFineClock:-1e9
@@ -2826,9 +2913,17 @@ function fmUnduck(){
         var st = stateAt(target.offset, clock);
         var speedKmh = Math.abs(car.speed);
         var violating = (st === 'red') || (st === 'yellow' && speedKmh > YELLOW_RISK_KMH);
-        if(violating && speedKmh > MIN_VIOLATE_KMH && (clock - target.lastFineClock) > FINE_COOLDOWN_S){
+        // G1: карати лише якщо ЦЕЙ світлофор попереду за курсом авто (±60°) —
+        // інакше штрафуємо за світлофор на перпендикулярній/сусідній вулиці.
+        var ahead = true;
+        try{
+          var ang = Math.atan2(target.x - car.x, target.y - car.y);
+          var diff = ((ang - car.heading + Math.PI) % (2*Math.PI)) - Math.PI;
+          ahead = Math.abs(diff) < 1.05;
+        }catch(e){ ahead = true; }
+        if(violating && ahead && speedKmh > MIN_VIOLATE_KMH && (clock - target.lastFineClock) > FINE_COOLDOWN_S){
           target.lastFineClock = clock;
-          try{ window.POLICE && window.POLICE.fine && window.POLICE.fine('red_light'); }catch(e){}
+          try{ window.POLICE && window.POLICE.fine && window.POLICE.fine('red_light', nearestIdx); }catch(e){}
           beepViolation();
         }
       }
@@ -2933,12 +3028,12 @@ function fmUnduck(){
 
   // ---------- визначення ліміту під авто ----------
   // Дворова/службова дорога (svc===1) → 20 км/год; будь-яка інша → 50 км/год.
+  // Перф: не викликає nearestRoad() сам (те саме вже рахує step() раз за кадр) —
+  // натомість читає кеш window.lastRoadHit, який step() виставляє щокадру.
   function rawLimitAt(x, y){
     try{
-      if(typeof nearestRoad !== 'function') return null;
-      var sticky;
-      try{ sticky = (typeof car !== 'undefined' && car) ? car.roadName : undefined; }catch(e){ sticky = undefined; }
-      var r = nearestRoad(x, y, sticky);
+      if(typeof roadsOnly !== 'undefined' && !roadsOnly) return 50; // вільний режим — завжди «місто»
+      var r = (typeof lastRoadHit !== 'undefined') ? lastRoadHit : null;
       if(!r) return null; // дороги ще не завантажені / авто поза сіткою — тримаємось попереднього ліміту
       return r.svc ? 20 : 50;
     }catch(e){ return null; }
@@ -3087,7 +3182,9 @@ window.PEDS = (function(){
   var ACTIVE_MAX          = 3;      // максимум активних пішоходів одночасно
   var SCAN_INTERVAL_S     = 0.3;    // throttle скану переходів, сек
   var ACTIVATE_RADIUS_M   = 90;     // "попереду/поряд" — радіус активації, м
+  var MIN_SPAWN_DIST_M    = 35;     // не спавнити пішохода ближче ніж це до авто (щоб не зʼявлявся впритул)
   var DESPAWN_RADIUS_M    = 150;    // прибираємо маркер, якщо авто відʼїхало далі, м
+  var FINE_GRACE_S        = 1;      // сек після спавну — не штрафуємо (пішохід ще "нереальний" для гравця)
   var BEHIND_TOLERANCE_M  = -20;    // проєкція на напрям авто; менше — перехід явно "позаду", пропускаємо
   var SPAWN_CHANCE_TICK   = 0.15;   // шанс "оживити" придатний перехід за один tick скану
   var RESPAWN_COOLDOWN_MS = 9000;   // кулдаун переходу після того, як пішохід зник (щоб не миготіло)
@@ -3171,8 +3268,8 @@ window.PEDS = (function(){
     try{ mk = L.marker([c.lat, c.lng], { icon: makeIcon(), interactive:false }).addTo(map); }
     catch(e){ return; }
     var ped = {
-      crossing: c, marker: mk, t: 0, dur: dur, half: half, sign: sign, perp: perp,
-      fined: false, thanked: false
+      crossing: c, marker: mk, t: 0, age: 0, dur: dur, half: half, sign: sign, perp: perp,
+      fined: false, thanked: false, lat: c.lat, lng: c.lng
     };
     c.ped = ped;
     active.push(ped);
@@ -3200,6 +3297,7 @@ window.PEDS = (function(){
     try{
       var p = fromXY(x,y);
       ped.marker.setLatLng([p.lat, p.lng]);
+      ped.x = x; ped.y = y; ped.lat = p.lat; ped.lng = p.lng; // G2(в): жива позиція — для дистанції штрафу
     }catch(e){ /* якщо не вийшло — маркер лишиться на попередній позиції цього кадру */ }
   }
 
@@ -3208,10 +3306,10 @@ window.PEDS = (function(){
     var speed = (car && typeof car.speed === 'number') ? car.speed : 0;
     var absSpeed = Math.abs(speed);
 
-    if(!ped.fined && absSpeed > FINE_SPEED_KMH && dCarToCrossing < FINE_DIST_M){
+    if(!ped.fined && ped.age > FINE_GRACE_S && absSpeed > FINE_SPEED_KMH && dCarToCrossing < FINE_DIST_M){
       ped.fined = true;
       try{ toast('🚶 Пропускай пішохода!'); }catch(e){}
-      try{ window.POLICE && window.POLICE.fine && window.POLICE.fine('pedestrian'); }catch(e){}
+      try{ window.POLICE && window.POLICE.fine && window.POLICE.fine('pedestrian', ped.crossing && ped.crossing.id); }catch(e){}
       return;
     }
     if(!ped.thanked && absSpeed < THANK_SPEED_KMH && dCarToCrossing < THANK_DIST_M){
@@ -3241,7 +3339,7 @@ window.PEDS = (function(){
 
       var d;
       try{ d = dist(carP.lat, carP.lng, c.lat, c.lng); }catch(e){ continue; }
-      if(d > ACTIVATE_RADIUS_M) continue;
+      if(d > ACTIVATE_RADIUS_M || d < MIN_SPAWN_DIST_M) continue;
 
       if(Math.random() < SPAWN_CHANCE_TICK) spawnPed(c);
     }
@@ -3266,11 +3364,13 @@ window.PEDS = (function(){
 
       for(var i=active.length-1; i>=0; i--){
         var ped = active[i];
-        ped.t += dt;
+        ped.t += dt; ped.age += dt;
         try{ updatePedPosition(ped); }catch(e){}
 
+        // G2(в): дистанція — від живої позиції пішохода (updatePedPosition щойно
+        // оновила ped.lat/ped.lng), а не від фіксованої точки переходу.
         var d = Infinity;
-        try{ d = dist(carP.lat, carP.lng, ped.crossing.lat, ped.crossing.lng); }catch(e){}
+        try{ d = dist(carP.lat, carP.lng, (typeof ped.lat==='number'?ped.lat:ped.crossing.lat), (typeof ped.lng==='number'?ped.lng:ped.crossing.lng)); }catch(e){}
 
         // прибираємо далекі/завершені маркери, щоб не накопичувались
         if(ped.t >= ped.dur || d > DESPAWN_RADIUS_M){
@@ -3706,11 +3806,35 @@ window.PEDS = (function(){
 fmInit(); window.liveInit&&window.liveInit(); window.SAVE&&window.SAVE.load(); window.TRACES&&window.TRACES.init(); window.SETTINGS&&window.SETTINGS.init(); window.POLICE&&window.POLICE.init(); window.LIGHTS&&window.LIGHTS.init(); window.SPEED&&window.SPEED.init(); window.PEDS&&window.PEDS.init(); window.SIGNS&&window.SIGNS.init(); window.AUDIO&&window.AUDIO.init();
 
 // ================= ЗАВАНТАЖЕННЯ ДАНИХ =================
-Promise.all([ fetch('data/roads.json').then(r=>r.json()), fetch('data/pois.json').then(r=>r.json()) ])
- .then(([roads,pois])=>{ buildRoads(roads.roads); addPOIs(pois);
-   document.getElementById('loadNote').textContent=`Готово: ${segments.length} відрізків доріг, ${stations.length} АЗС, ${churchMarks.length} храмів`;
- })
- .catch(e=>{ document.getElementById('loadNote').textContent='Помилка завантаження даних: '+e; });
+// N2: roads і pois завантажуються незалежно (allSettled) — падіння одного не
+// відкидає інший; кожен fetch перевіряє r.ok; якщо дороги не завантажились
+// (або сегментів 0), гра лишається керованою — вимикаємо roadsOnly і попереджаємо.
+Promise.allSettled([
+  fetch('data/roads.json').then(r=>{ if(!r.ok) throw new Error('roads http '+r.status); return r.json(); }),
+  fetch('data/pois.json').then(r=>{ if(!r.ok) throw new Error('pois http '+r.status); return r.json(); })
+]).then(([roadsRes, poisRes])=>{
+  try{
+    var notes=[];
+    if(roadsRes.status==='fulfilled'){
+      try{ buildRoads(roadsRes.value.roads); }catch(e){ notes.push('Помилка обробки доріг'); }
+    } else { notes.push('Дороги не завантажились'); }
+    if(segments.length===0){
+      roadsOnly=false;
+      notes.push('режим вільної їзди');
+      try{
+        var b=document.getElementById('modeBtn');
+        if(b){ b.classList.add('on'); b.innerHTML='🗺️<small>БУДЬ-ДЕ</small>'; }
+      }catch(e){}
+      try{ toast('🗺️ Дороги не завантажились — увімкнено вільну їзду'); }catch(e){}
+    }
+    if(poisRes.status==='fulfilled'){
+      try{ addPOIs(poisRes.value); }catch(e){ notes.push('Помилка обробки точок'); }
+    } else { notes.push('точки (АЗС/храми) не завантажились'); }
+    if(stations.length===0) notes.push('АЗС не завантажено');
+    var base=`Готово: ${segments.length} відрізків доріг, ${stations.length} АЗС, ${churchMarks.length} храмів`;
+    document.getElementById('loadNote').textContent = notes.length ? (base+' · '+notes.join('; ')) : base;
+  }catch(e){ try{ document.getElementById('loadNote').textContent='Помилка завантаження даних: '+e; }catch(e2){} }
+});
 </script>
 </body>
 </html>
