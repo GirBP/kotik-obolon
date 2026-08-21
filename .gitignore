@@ -1,3 +1,7 @@
 data/obolon_*.json
 data/specs/
 scratchpad/
+node_modules/
+dist/
+*.log
+.DS_Store
