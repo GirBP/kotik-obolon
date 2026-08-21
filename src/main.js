@@ -8,7 +8,8 @@ import { map, dist } from './world/map.js';
 import { poiIcon } from './world/markers.js';
 import { buildRoads, nearestRoad } from './world/roads.js';
 import { addPOIs } from './world/pois.js';
-import { addScenery } from './world/scenery.js';
+import { addScenery, refreshScenery } from './world/scenery.js';
+import { setTheme, DAY, NIGHT } from './world/theme.js';
 import { speakLines } from './core/tts.js';
 
 import { updateHUD, setCtxBtn } from './ui/hud.js';
@@ -29,6 +30,7 @@ import './systems/progression.js';
 import './systems/onboarding.js';
 import './systems/multiplayer.js';
 import './systems/postcard.js';
+import './systems/catrig.js';
 
 // ================= КОНФІГ =================
 
@@ -341,6 +343,8 @@ function step(dt){
   window.LIGHTS&&window.LIGHTS.step(dt);
   window.SPEED&&window.SPEED.step(dt);
   window.PEDS&&window.PEDS.step(dt);
+  window.CATRIG&&window.CATRIG.step(dt);
+  applyDayNight();
   window.PASSENGERS&&window.PASSENGERS.step(dt);
   updateHUD();
 }
@@ -807,7 +811,21 @@ function fmUnduck(){
 }
 
 
-fmInit(); window.liveInit&&window.liveInit(); window.SAVE&&window.SAVE.load(); window.TRACES&&window.TRACES.init(); window.SETTINGS&&window.SETTINGS.init(); window.POLICE&&window.POLICE.init(); window.LIGHTS&&window.LIGHTS.init(); window.SPEED&&window.SPEED.init(); window.PEDS&&window.PEDS.init(); window.SIGNS&&window.SIGNS.init(); window.AUDIO&&window.AUDIO.init(); window.SFX&&window.SFX.init(); window.PROGRESSION&&window.PROGRESSION.init(); window.PASSENGERS&&window.PASSENGERS.init(); window.FMQUESTS&&window.FMQUESTS.init(); window.ONBOARDING&&window.ONBOARDING.init(); window.MP&&window.MP.init();
+fmInit(); window.liveInit&&window.liveInit(); window.SAVE&&window.SAVE.load(); window.TRACES&&window.TRACES.init(); window.SETTINGS&&window.SETTINGS.init(); window.POLICE&&window.POLICE.init(); window.LIGHTS&&window.LIGHTS.init(); window.SPEED&&window.SPEED.init(); window.PEDS&&window.PEDS.init(); window.SIGNS&&window.SIGNS.init(); window.AUDIO&&window.AUDIO.init(); window.SFX&&window.SFX.init(); window.PROGRESSION&&window.PROGRESSION.init(); window.PASSENGERS&&window.PASSENGERS.init(); window.FMQUESTS&&window.FMQUESTS.init(); window.ONBOARDING&&window.ONBOARDING.init(); window.MP&&window.MP.init(); window.CATRIG&&window.CATRIG.init();
+
+// День↔ніч міняє ПАЛІТРУ світу (а не накладає сіру плівку). Перемикаємо дискретно,
+// лише коли фаза реально змінилась: зміна теми = перемальовка всіх кешованих тайлів.
+let _wasNight = null;
+function applyDayNight(){
+  try{
+    if(!window.OWN_WORLD || !window.LIVE) return;
+    const isNight = !!window.LIVE.isNight;
+    if(isNight === _wasNight) return;
+    _wasNight = isNight;
+    setTheme(isNight ? NIGHT : DAY);
+    refreshScenery();
+  }catch(e){}
+}
 
 // ================= ЗАВАНТАЖЕННЯ ДАНИХ =================
 // N2: roads і pois завантажуються незалежно (allSettled) — падіння одного не
@@ -829,6 +847,7 @@ Promise.allSettled([
       try{
         addScenery(map, worldRes.value, roadsRes.value.roads);
         document.body.classList.add('own-world');   // ховає чужі тайли
+        window.OWN_WORLD = true;
       }catch(e){ notes.push('Власний світ не намалювався'); }
     } else if(worldRes.status!=='fulfilled'){ notes.push('геометрія світу не завантажилась'); }
     if(segments.length===0){

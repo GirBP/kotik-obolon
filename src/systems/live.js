@@ -267,7 +267,10 @@ import { car, state } from '../core/state.js';
     LIVE.phaseOfDay = dominantPhase(w);
 
     var tint = mixTint(w);
-    if(elTint) elTint.style.background = 'rgba('+(tint.r|0)+','+(tint.g|0)+','+(tint.b|0)+','+tint.a.toFixed(3)+')';
+    // Власний рендер світу сам змінює палітру на нічну (docs/ARTBIBLE.md), тож
+    // сіра плівка поверх нього лише замулює картинку — лишаємо легкий натяк.
+    var tintK = window.OWN_WORLD ? 0.28 : 1;
+    if(elTint) elTint.style.background = 'rgba('+(tint.r|0)+','+(tint.g|0)+','+(tint.b|0)+','+(tint.a*tintK).toFixed(3)+')';
 
     var nowNight = (hour < LIVE.sunriseH) || (hour >= LIVE.sunsetH);
     LIVE.isNight = nowNight;

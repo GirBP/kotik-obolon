@@ -1,7 +1,6 @@
 // ================= ДОРОГИ (сегменти + сітка + розмітка + снапінг) =================
-import { CFG, GRID } from '../core/config.js';
-import { toXY, fromXY } from '../core/geo.js';
-import { map } from './map.js';
+import { GRID } from '../core/config.js';
+import { toXY } from '../core/geo.js';
 import { segments, grid } from '../core/state.js';
 
 export function buildRoads(roads){
@@ -26,47 +25,13 @@ export function buildRoads(roads){
       markings.push({pts:ptsXY, lanes, oneway});
     }
   });
-  drawMarkings(markings);
+  // Розмітку малює scenery.js усередині тайлів власного світу (кешується + знає тему).
+  // Якщо власний світ не завантажиться — лишаються тайли CARTO з власною розміткою,
+  // тож окремий полілінійний шар більше не потрібен у жодному зі сценаріїв.
+  void markings;
 }
 
 // зміщення полілінії на d метрів праворуч від напряму (усереднені нормалі)
-function offsetLine(pts, d){
-  const out=[];
-  for(let i=0;i<pts.length;i++){
-    const p0=pts[Math.max(0,i-1)], p1=pts[Math.min(pts.length-1,i+1)];
-    let nx=p1.y-p0.y, ny=-(p1.x-p0.x);
-    const L=Math.hypot(nx,ny)||1; nx/=L; ny/=L;
-    out.push(fromXY(pts[i].x+nx*d, pts[i].y+ny*d));
-  }
-  return out.map(p=>[p.lat,p.lng]);
-}
-function drawMarkings(ways){
-  const layer=L.layerGroup();
-  const W=CFG.laneW;
-  ways.forEach(w=>{
-    const latlngs=w.pts.map(p=>{ const q=fromXY(p.x,p.y); return [q.lat,q.lng]; });
-    if(w.oneway){
-      // односмугова стрічка: роздільники між смугами, по центру ширини
-      for(let k=1;k<w.lanes;k++){
-        const off=(k - w.lanes/2)*W;
-        L.polyline(offsetLine(w.pts,off), {color:'#fff', weight:1.3, opacity:.85, dashArray:'7,11', interactive:false}).addTo(layer);
-      }
-    } else {
-      // осьова: суцільна (широкі) або переривчаста (вузькі)
-      if(w.lanes>=2)
-        L.polyline(latlngs, {color:'#fff', weight:2.2, opacity:.95, interactive:false}).addTo(layer);
-      else
-        L.polyline(latlngs, {color:'#fff', weight:1.4, opacity:.8, dashArray:'9,13', interactive:false}).addTo(layer);
-      // роздільники смуг у кожному напрямку
-      for(let k=1;k<w.lanes;k++){
-        for(const sgn of [1,-1]){
-          L.polyline(offsetLine(w.pts, sgn*k*W), {color:'#fff', weight:1.2, opacity:.75, dashArray:'7,11', interactive:false}).addTo(layer);
-        }
-      }
-    }
-  });
-  layer.addTo(map);
-}
 export function nearestRoad(x,y,stickyName){
   // score = відстань + штраф двору − бонус «тієї самої вулиці»:
   // великі дороги не втрачаються через паралельні проїзди, але у двір заїхати можна.

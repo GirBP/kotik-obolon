@@ -21,12 +21,21 @@
 <meta property="og:image" content="https://girbp.github.io/kotik-obolon/icons/icon-512.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400..800&display=swap" rel="stylesheet">
 <style>
-  :root{ --accent:#F5A623; --green:#2eb35c; --red:#d93a34; --blue:#2b7fd4; --ink:#1a1c20; }
+  /* «Ранкова шпальта»: акценти — бурштин / «можна їхати» / стоп; чипи — теплий темний шар (без backdrop-filter) */
+  :root{
+    --accent:#F5A623; --green:#29B6C6; --red:#FF5A4E; --blue:#2b7fd4; --ink:#1a1c20;
+    --chip-bg:#1c1f2b; --chip-fg:#F3E9D2;
+    --hairline:rgba(243,233,210,.16); --hairline-oncolor:rgba(255,255,255,.22); --hairline-onlight:rgba(26,28,32,.12);
+  }
   *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body{ margin:0; height:100%; overflow:hidden; background:#0e1013; position:fixed; inset:0; width:100%;
     overscroll-behavior:none; touch-action:none; -webkit-user-select:none; user-select:none;
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+    font-family:'Manrope',system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    font-variant-numeric:tabular-nums; }
   #map{ position:absolute; inset:0; z-index:1; background:#e8e6df; }
   .leaflet-control,.leaflet-top,.leaflet-bottom{ display:none !important; }
   /* власний рендер світу: ховаємо чужу тайлову підкладку */
@@ -44,32 +53,37 @@
   /* HUD */
   #hud{ position:absolute; top:0; left:0; right:0; z-index:10; padding:8px;
         padding-top:calc(8px + env(safe-area-inset-top)); display:flex; gap:6px; flex-wrap:wrap; pointer-events:none; }
-  .chip{ background:rgba(20,22,26,.82); color:#fff; border-radius:12px; padding:6px 10px;
-         font-weight:700; font-size:13px; backdrop-filter:blur(6px); display:flex; align-items:center; gap:6px; }
+  .chip{ background:var(--chip-bg); color:var(--chip-fg); border:1px solid var(--hairline); border-radius:12px; padding:6px 10px;
+         font-weight:700; font-size:13px; display:flex; align-items:center; gap:6px; transition:opacity .35s ease; }
   .chip small{ font-weight:500; font-size:10px; opacity:.7; }
   .gauge{ width:52px; height:6px; background:#444; border-radius:3px; overflow:hidden; }
   .gauge i{ display:block; height:100%; background:var(--green); width:50%; }
   #street{ flex:1; min-width:0; }
   #street span{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* автоприховування неактивних чипів на «тихих» ділянках (стоїть/повільно їде) — лишаємо час/погоду (#liveChip) і вулицю (#street) */
+  #hud.calm .chip:not(#liveChip):not(#street){ opacity:0; pointer-events:none; }
 
   /* банер завдання / підказки */
   #banner{ position:absolute; top: calc(88px + env(safe-area-inset-top)); left:8px; right:8px; z-index:9; pointer-events:none; display:flex; justify-content:center; }
   #banner .msg{ background:var(--accent); color:#3a2a05; font-weight:700; font-size:13px; padding:8px 14px;
-     border-radius:14px; text-align:center; max-width:92%; box-shadow:0 6px 18px rgba(0,0,0,.3); opacity:0; transition:opacity .3s; }
-  #banner .msg.show{ opacity:1; }
+     border-radius:14px; text-align:center; max-width:92%; border:1px solid rgba(58,42,5,.18);
+     opacity:0; transform:scale(1) rotate(0deg); transition:opacity .3s ease; }
+  /* stamp-thunk: штемпель-удар замість плавної появи — 120мс, пружний овершут */
+  #banner .msg.show{ opacity:1; transition:opacity .12s ease; animation:bannerStamp .12s cubic-bezier(.34,1.56,.64,1); }
+  @keyframes bannerStamp{ from{ transform:scale(1.15) rotate(-2deg); } to{ transform:scale(1) rotate(0deg); } }
 
   /* права колонка дій */
   #actions{ position:absolute; right: calc(8px + env(safe-area-inset-right)); top: calc(104px + env(safe-area-inset-top)); z-index:10; display:flex; flex-direction:column; gap:8px; }
-  .act{ pointer-events:auto; width:52px; height:52px; border:none; border-radius:14px; background:rgba(20,22,26,.8);
-        color:#fff; font-size:22px; box-shadow:0 3px 10px rgba(0,0,0,.3); }
+  .act{ pointer-events:auto; width:52px; height:52px; border:1px solid var(--hairline); border-radius:14px; background:var(--chip-bg);
+        color:var(--chip-fg); font-size:22px; }
   .act:active{ transform:scale(.92); }
-  .act.on{ background:var(--green); }
+  .act.on{ background:var(--green); color:#0d2b30; }
   .act small{ display:block; font-size:8px; font-weight:700; }
 
   /* контекстна кнопка (заправка/церква/завдання) */
   #ctx{ position:absolute; left:50%; bottom:190px; transform:translateX(-50%); z-index:12; pointer-events:auto;
-        background:var(--blue); color:#fff; font-weight:800; font-size:15px; padding:12px 20px; border:none; border-radius:16px;
-        box-shadow:0 6px 18px rgba(0,0,0,.35); display:none; }
+        background:var(--blue); color:#fff; font-weight:800; font-size:15px; padding:12px 20px; border:1px solid var(--hairline-oncolor); border-radius:16px;
+        display:none; }
   #ctx:active{ transform:translateX(-50%) scale(.95); }
 
   /* керування (дві зони) */
@@ -79,23 +93,24 @@
   .cluster{ display:flex; gap:10px; align-items:flex-end; }
   .btn{ pointer-events:auto; user-select:none; -webkit-user-select:none; touch-action:none; border:none; color:#fff; font-weight:800;
         border-radius:20px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
-        box-shadow:0 4px 12px rgba(0,0,0,.32); transition:transform .07s, filter .07s; }
+        transition:transform .07s, filter .07s; }
   .btn:active{ transform:scale(.92); filter:brightness(1.12); }
   .btn .ic{ font-size:24px; line-height:1; }
-  .btn.steer{ width:70px; height:90px; font-size:30px; background:rgba(20,22,26,.8); }
-  #brake{ width:76px; height:90px; background:var(--red); font-size:13px; }
-  #gas{ width:92px; height:100px; background:var(--green); font-size:15px; }
+  .btn.steer{ width:70px; height:90px; font-size:30px; background:var(--chip-bg); border:1px solid var(--hairline); }
+  #brake{ width:76px; height:90px; background:var(--red); font-size:13px; border:1px solid var(--hairline-oncolor); }
+  /* єдина виразна тінь на екрані — головна кнопка дії */
+  #gas{ width:92px; height:100px; background:var(--green); color:#0d2b30; font-size:15px; box-shadow:0 10px 26px rgba(15,60,64,.4); }
 
   /* ручне керування (механіка) */
   #manualCtl{ position:absolute; left:0; right:0; bottom: calc(135px + env(safe-area-inset-bottom)); z-index:11; display:flex; justify-content:center; gap:8px; pointer-events:none; }
   #manualCtl.hidden{ display:none; }
-  .mbtn{ pointer-events:auto; touch-action:none; border:none; color:#fff; font-weight:800; border-radius:14px;
-         background:rgba(20,22,26,.86); box-shadow:0 3px 10px rgba(0,0,0,.32); display:flex; align-items:center; justify-content:center; }
+  .mbtn{ pointer-events:auto; touch-action:none; border:1px solid var(--hairline); color:var(--chip-fg); font-weight:800; border-radius:14px;
+         background:var(--chip-bg); display:flex; align-items:center; justify-content:center; }
   .mbtn:active{ transform:scale(.92); filter:brightness(1.15); }
-  #clutchBtn{ width:150px; height:50px; font-size:15px; background:#7a5cd0; }
+  #clutchBtn{ width:150px; height:50px; font-size:15px; background:#7a5cd0; color:#fff; border:1px solid var(--hairline-oncolor); }
   #clutchBtn.pressed{ background:#5a3fb0; }
   .mbtn.sm{ width:54px; height:50px; font-size:24px; }
-  .chip.stall{ background:#d93a34 !important; }
+  .chip.stall{ background:var(--red) !important; }
 
   /* оверлеї / панелі */
   .overlay{ position:absolute; inset:0; z-index:30; display:flex; align-items:center; justify-content:center;
@@ -130,15 +145,15 @@
   .poi.sens{ background:#1a7a4f; }
 
   #radioBtn{ position:absolute; left:50%; bottom:252px; transform:translateX(-50%); z-index:12; pointer-events:auto;
-    background:#232630; color:#fff; font-weight:800; font-size:14px; padding:11px 18px; border:none; border-radius:16px;
-    box-shadow:0 6px 18px rgba(0,0,0,.35); display:none; }
+    background:#232630; color:#fff; font-weight:800; font-size:14px; padding:11px 18px; border:1px solid var(--hairline); border-radius:16px;
+    display:none; }
   #radioBtn.on{ background:#1a7a4f; }
   #radioBtn:active{ transform:translateX(-50%) scale(.95); }
 
   /* міні-плеєр YouTube (радіо «Сенс» — офіційний embed) */
   #ytBox{ position:absolute; left:8px; right:auto; bottom:118px; transform:none; z-index:26;
     width:min(80vw,320px); background:#15171c; border-radius:16px; overflow:hidden;
-    box-shadow:0 14px 44px rgba(0,0,0,.5); }
+    border:1px solid var(--hairline); }
   #ytBox.hidden{ display:none; }
   #ytHead{ display:flex; align-items:center; justify-content:space-between; padding:8px 12px;
     color:#fff; font-size:13px; font-weight:800; }
@@ -150,10 +165,10 @@
         padding-bottom:calc(14px + env(safe-area-inset-bottom)); display:flex; justify-content:center;
         background:linear-gradient(transparent, rgba(8,10,13,.55)); }
   #seqCard{ background:#fff; color:var(--ink); border-radius:20px; padding:16px 18px; width:100%; max-width:430px;
-            box-shadow:0 12px 40px rgba(0,0,0,.45); }
+            border:1px solid var(--hairline-onlight); }
   #seqStep{ font-size:18px; font-weight:800; text-align:center; }
   #seqSub{ font-size:12.5px; color:#2a8a45; font-weight:700; text-align:center; min-height:1.2em; margin-top:3px; }
-  #seqBtn{ margin-top:12px; width:100%; background:var(--green); color:#fff; border:none; border-radius:14px;
+  #seqBtn{ margin-top:12px; width:100%; background:var(--green); color:#0d2b30; border:none; border-radius:14px;
            padding:15px; font-size:17px; font-weight:800; }
   #seqBtn:active{ transform:scale(.97); }
   #seqBtn.hidden{ display:none; }

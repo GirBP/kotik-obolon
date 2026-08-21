@@ -146,7 +146,31 @@ export function drawWorld(ctx, P, m2px, bb, W, H) {
   // 1) зелень
   for (const o of world.green) if (hits(o.bb, s, wl, n, e)) poly(o.g, THEME.green);
   // 2) вода
-  for (const o of world.water) if (hits(o.bb, s, wl, n, e)) poly(o.g, THEME.water, THEME.waterEdge, 1.5);
+  for (const o of world.water) {
+    if (!hits(o.bb, s, wl, n, e)) continue;
+    poly(o.g, THEME.water, THEME.waterEdge, 1.5);
+    // халфтон-штрихування води (кешується разом із тайлом — нуль вартості на кадр)
+    if (THEME.waterHatch) {
+      ctx.save();
+      ctx.beginPath();
+      for (let i = 0; i < o.g.length; i++) {
+        const [x, y] = P(o.g[i][0], o.g[i][1]);
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.closePath();
+      ctx.clip();
+      ctx.strokeStyle = THEME.waterHatch;
+      ctx.lineWidth = Math.max(1, m2px(0.9));
+      const stepPx = Math.max(6, m2px(7));
+      ctx.beginPath();
+      for (let d = -H; d < W + H; d += stepPx) {
+        ctx.moveTo(d, 0);
+        ctx.lineTo(d + H, H);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
 
   // 3) дороги: спершу «облямівка», потім проїзна частина
   ctx.lineCap = 'round';
@@ -173,6 +197,48 @@ export function drawWorld(ctx, P, m2px, bb, W, H) {
     }
   }
 
+  // 3b) РОЗМІТКА (у тайлі, а не окремим шаром: кешується і знає тему)
+  const LW = 3.0; // ширина смуги, м
+  for (const r of roadWays) {
+    if (r.svcFlag) continue;
+    if (r.h === 'service' || r.h === 'living_street') continue;
+    if (!hits(r.bb, s, wl, n, e)) continue;
+    const lanes = r.l || 1;
+    const pts = r.g.map((q) => P(q[0], q[1]));
+    if (pts.length < 2) continue;
+    // зсув полілінії на d пікселів по нормалі
+    const off = (d) => {
+      const out = [];
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+        let nx = b[1] - a[1], ny = -(b[0] - a[0]);
+        const L = Math.hypot(nx, ny) || 1;
+        out.push([pts[i][0] + (nx / L) * d, pts[i][1] + (ny / L) * d]);
+      }
+      return out;
+    };
+    const line = (arr, color, wpx, dash) => {
+      if (wpx < 0.4) return;
+      ctx.beginPath();
+      for (let i = 0; i < arr.length; i++) i ? ctx.lineTo(arr[i][0], arr[i][1]) : ctx.moveTo(arr[i][0], arr[i][1]);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = wpx;
+      ctx.setLineDash(dash || []);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    };
+    const dash = [m2px(2.4), m2px(3.2)];
+    if (r.o) {
+      for (let k = 1; k < lanes; k++) line(off((k - lanes / 2) * m2px(LW)), THEME.lane, m2px(0.16), dash);
+    } else {
+      line(pts, THEME.laneCenter, m2px(lanes >= 2 ? 0.24 : 0.16), lanes >= 2 ? null : dash);
+      for (let k = 1; k < lanes; k++) {
+        line(off(k * m2px(LW)), THEME.lane, m2px(0.14), dash);
+        line(off(-k * m2px(LW)), THEME.lane, m2px(0.14), dash);
+      }
+    }
+  }
+
   // 4) залізниця
   for (const o of world.rail) {
     if (!hits(o.bb, s, wl, n, e)) continue;
@@ -193,6 +259,22 @@ export function drawWorld(ctx, P, m2px, bb, W, H) {
   for (const o of world.buildings) {
     if (!hits(o.bb, s, wl, n, e)) continue;
     const lift = Math.min(14, 0.9 + o.l * THEME.buildingLift);
+    // НІЧ: бурштинова пляма світла на землі біля під'їзду (замість «вікон» —
+    // будівлі тут footprint+бік, а не 3D-коробки, тож вікна фізично неможливі)
+    if (THEME.pool && o.l >= 4) {
+      let cx = 0, cy = 0;
+      for (const pt of o.g) { const [x, y] = P(pt[0], pt[1]); cx += x; cy += y; }
+      cx /= o.g.length; cy /= o.g.length;
+      const px = cx - sh[0] * lift * 2.2, py = cy - sh[1] * lift * 2.2;
+      const rad = Math.max(m2px(9), lift * 3.4);
+      const gd = ctx.createRadialGradient(px, py, 0, px, py, rad);
+      gd.addColorStop(0, THEME.pool);
+      gd.addColorStop(1, 'rgba(255,184,77,0)');
+      ctx.fillStyle = gd;
+      ctx.beginPath();
+      ctx.arc(px, py, rad, 0, 6.2832);
+      ctx.fill();
+    }
     // тінь/бік
     ctx.beginPath();
     for (let i = 0; i < o.g.length; i++) {
@@ -202,8 +284,8 @@ export function drawWorld(ctx, P, m2px, bb, W, H) {
     ctx.closePath();
     ctx.fillStyle = THEME.buildingSide;
     ctx.fill();
-    // корпус
-    poly(o.g, THEME.building, THEME.buildingEdge, 1);
+    // корпус (уночі кант теплий — «освітлений край»)
+    poly(o.g, THEME.building, THEME.buildingEdge, THEME.night ? 1.4 : 1);
   }
 }
 
