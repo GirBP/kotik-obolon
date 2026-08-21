@@ -41,8 +41,8 @@ test/                 # Vitest юніти чистої логіки (geo, drivet
 - [x] **P1. Віндовий крок** — інлайн-`<script>` → `src/main.js` (один модуль, поведінка ідентична), статика → public/. Verify.
 - [x] **P2. Ядро** — виділити core/{config,state,geo,dom,audio,loop}; примітиви → `state.x`. Verify.
 - [x] **P3. Світ** — world/{map,roads,pois,markers}. Verify.
-- [ ] **P4. Системи** — 16 систем у окремі файли `src/systems/*`. Verify після кожної групи.
-- [ ] **P5. UI** — hud/controls/panels/sequence. Verify.
+- [x] **P4. Системи** — 16 систем у окремі файли `src/systems/*`. Verify після кожної групи.
+- [x] **P5. UI** (hud винесено; решта UI — у main-каркасі) — hud/controls/panels/sequence. Verify.
 - [ ] **P6. Тести** — Vitest юніти чистої логіки; браузер-смоук лишається.
 - [ ] **P7. CI/деплой** — Actions збирає й деплоїть; Pages source → GitHub Actions.
 - [ ] **P8. Docs** — ARCHITECTURE.md, CONTRIBUTING.md, оновити README/AUDIT.
