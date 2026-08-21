@@ -83,7 +83,7 @@ export function addScenery(map, w, ways) {
   return layer;
 }
 
-// ---- малювання одного тайла ----
+// ---- малювання одного тайла (обгортка над універсальним drawWorld) ----
 function drawTile(ctx, coords, size, map) {
   const z = coords.z;
   // географічні межі тайла (+ запас, щоб об'єкти на межі не «обрізались» різко)
@@ -108,9 +108,22 @@ function drawTile(ctx, coords, size, map) {
   const mPerPx = 156543.03392 * Math.cos((nw.lat * Math.PI) / 180) / Math.pow(2, z);
   const m2px = (m) => m / mPerPx;
 
+  drawWorld(ctx, P, m2px, { s, n, w: wl, e }, size.x, size.y);
+}
+
+/**
+ * Універсальний рендер світу в будь-який контекст.
+ * Використовується і для тайлів карти, і для «листівки» (шер-картки).
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {(lat:number,lng:number)=>[number,number]} P  проєкція в пікселі контексту
+ * @param {(m:number)=>number} m2px  метри → пікселі
+ * @param {{s:number,n:number,w:number,e:number}} bb  географічні межі кадру
+ */
+export function drawWorld(ctx, P, m2px, bb, W, H) {
+  const s = bb.s, n = bb.n, wl = bb.w, e = bb.e;
   // 0) підкладка
   ctx.fillStyle = THEME.ground;
-  ctx.fillRect(0, 0, size.x, size.y);
+  ctx.fillRect(0, 0, W, H);
 
   const poly = (g, fill, stroke, lw) => {
     ctx.beginPath();
@@ -192,6 +205,21 @@ function drawTile(ctx, coords, size, map) {
     // корпус
     poly(o.g, THEME.building, THEME.buildingEdge, 1);
   }
+}
+
+/**
+ * Намалювати ділянку світу навколо точки у власний canvas (для листівки).
+ * @param {number} lat @param {number} lng  центр
+ * @param {number} W @param {number} H  розмір у пікселях
+ * @param {number} mPerPx  метрів на піксель (менше = ближче)
+ */
+export function drawRegion(ctx, lat, lng, W, H, mPerPx) {
+  if (!world) return false;
+  const K = 111320, KX = K * Math.cos((lat * Math.PI) / 180);
+  const P = (la, ln) => [W / 2 + ((ln - lng) * KX) / mPerPx, H / 2 - ((la - lat) * K) / mPerPx];
+  const halfLat = ((H / 2) * mPerPx) / K, halfLng = ((W / 2) * mPerPx) / KX;
+  drawWorld(ctx, P, (m) => m / mPerPx, { s: lat - halfLat, n: lat + halfLat, w: lng - halfLng, e: lng + halfLng }, W, H);
+  return true;
 }
 
 /** Перемалювати світ (після зміни теми). */

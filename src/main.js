@@ -28,6 +28,7 @@ import './systems/fmquests.js';
 import './systems/progression.js';
 import './systems/onboarding.js';
 import './systems/multiplayer.js';
+import './systems/postcard.js';
 
 // ================= КОНФІГ =================
 

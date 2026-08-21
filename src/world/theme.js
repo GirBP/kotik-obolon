@@ -22,6 +22,14 @@ export const THEME = {
   buildingEdge: '#cfc4b1',
   buildingLift: 0.38, // пікселів «висоти» на поверх
   buildingShadowDir: [0.55, 0.83], // напрям падіння тіні (нормалізований)
+
+  // листівка (шер-картка)
+  cardBg: '#f6f1e6',
+  cardInk: '#26221a',
+  cardInkSoft: 'rgba(38,34,26,.62)',
+  cardChip: 'rgba(0,0,0,.05)',
+  cardEdge: 'rgba(0,0,0,.10)',
+  cardVignette: 'rgba(20,18,12,.28)',
 };
 
 /** Застосувати інший набір токенів (наприклад, нічний). */
