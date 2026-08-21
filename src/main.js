@@ -1,31 +1,20 @@
+import { CFG, BRAND_PRICE, LPG_PRICE, GEARS_M, ENG, torqueCurve, LANDMARKS, MP_BROKERS, GRID } from './core/config.js';
+import { toXY, fromXY } from './core/geo.js';
+import { ac, bell } from './core/audio.js';
+import { esc, toast } from './core/dom.js';
+import { state, input, car, resetCar, segments, grid, stations, fuelMarks, churchMarks, radio, hudCache } from './core/state.js';
+
 // ================= КОНФІГ =================
-const CFG = {
-  zoom: 19, center: [50.5085, 30.5030],
-  tank: 50, startFuel: 5, startMoney: 900,
-  consCity: 12.0,           // л/100км (місто, ігровий темп)
-  idleLh: 1.1,              // л/год на холостому
-  maxSpeed: 58, accel: 22, brake: 60, friction: 10, turn: 2.7, cruise: 42,
-  jobBase: 40, jobPerKm: 20,
-  churchBonus: 50, churchCooldownSec: 90,
-  arrive: 22,              // м — радіус «прибуття»
-  laneW: 3.0,              // ширина смуги, м
-  radioR: 85,              // радіус дії радіо біля POI, м (храми стоять у глибині кварталів)
-  holdMs: 240,             // тап (зміна смуги) vs утримання (кермо)
-};
-const BRAND_PRICE = { WOG:78.9, ОККО:78.9, SOCAR:77.9, KLO:72.9, "КЛО":72.9,
-  "Народна":71.0, Parallel:73.0 };
-const LPG_PRICE = 40.0;
+
+
+
 
 // ===== КПП (реалістична модель, спец) =====
-const GEARS_M = { '-1':-13.53, '0':0, '1':14.15, '2':7.95, '3':5.54, '4':4.22, '5':3.36 };
-const ENG = { idle:800, redline:6000, fuelcut:6500, stall:450, stallGrace:0.35,
-  revUp:9, revDown:6, mass:1200, KFAC:8.77, forceK:300, dragA:0.32, roll:60, brakeN:6500 };
-function torqueCurve(rpm){ const p=[[800,0.5],[2000,0.78],[3500,1.0],[4500,0.97],[6000,0.6],[6500,0]];
-  if(rpm<=p[0][0]) return p[0][1];
-  for(let i=0;i<p.length-1;i++){ if(rpm<=p[i+1][0]){ const [x0,y0]=p[i],[x1,y1]=p[i+1];
-    return y0+(y1-y0)*(rpm-x0)/(x1-x0); } } return 0; }
+
+
+
 function updateDrivetrain(dt){
-  const running = car.engineRunning && fuel>0;
+  const running = car.engineRunning && state.fuel>0;
   const throttle = (input.gas && running)?1:0;
   if(car.mode!=='manual'){
     // АВТОМАТ — аркадна модель, без глохнення
@@ -44,7 +33,7 @@ function updateDrivetrain(dt){
   car.rpm = Math.max(0, Math.min(ENG.fuelcut, car.rpm));
   if(!car.engineRunning) car.rpm=0;
   let engineForce=0;
-  if(car.engineRunning && engaged>0 && car.gear!==0 && fuel>0)
+  if(car.engineRunning && engaged>0 && car.gear!==0 && state.fuel>0)
     engineForce = torqueCurve(car.rpm)*throttle*Math.abs(comb)*ENG.forceK*engaged*Math.sign(comb);
   const brakeForce=(input.brake?1:0)*ENG.brakeN*(window.LIVE?window.LIVE.grip:1);
   const drag=ENG.dragA*car.speed*Math.abs(car.speed)+ENG.roll*Math.sign(car.speed);
@@ -67,16 +56,7 @@ function startEngine(){ if(!car.engineRunning){ if(car.mode==='manual' && car.cl
   car.engineRunning=true; car.rpm=ENG.idle; window.SFX&&window.SFX.play('engine_start'); toast('🔑 Двигун заведено'); } }
 
 // Орієнтири для замовлень (реальні місця Оболоні)
-const LANDMARKS = [
-  { name:"Метро «Оболонь»", lat:50.50130, lng:30.49830 },
-  { name:"Метро «Мінська»", lat:50.51220, lng:30.49850 },
-  { name:"Метро «Героїв Дніпра»", lat:50.52230, lng:30.49900 },
-  { name:"ТРЦ Dream Town", lat:50.52360, lng:30.49720 },
-  { name:"Парк «Наталка»", lat:50.51880, lng:30.51920 },
-  { name:"Оболонська набережна", lat:50.51150, lng:30.51600 },
-  { name:"Озеро Опечень", lat:50.51400, lng:30.50650 },
-  { name:"Оболонський проспект", lat:50.50650, lng:30.49950 },
-];
+
 
 // ================= КАРТА =================
 // N4: Leaflet міг не завантажитись (CDN впав) — без цього гравець просто
@@ -93,33 +73,33 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r
   { maxZoom: CFG.zoom, maxNativeZoom: 19, subdomains:'abcd' }).addTo(map);
 
 // ================= ГЕО-ХЕЛПЕРИ (equirectangular XY) =================
-const ORG = { lat: CFG.center[0], lng: CFG.center[1] };
-const MLAT = 111320, MLNG = 111320 * Math.cos(ORG.lat*Math.PI/180);
-const toXY = (lat,lng) => ({ x:(lng-ORG.lng)*MLNG, y:(lat-ORG.lat)*MLAT });
-const fromXY = (x,y) => ({ lat:ORG.lat+y/MLAT, lng:ORG.lng+x/MLNG });
+
+
+
+
 
 // ================= СТАН =================
 const carEl = document.getElementById('car');
-let phase='menu', roadsOnly=true;
-let car={ x:0, y:0, heading:0, speed:0 };
-let fuel=CFG.startFuel, money=CFG.startMoney, fuelType='A95';
-let churchCd=0, blessing=0;
-let job=null; // {from,to,stage:'pickup'|'deliver',fromMk,toMk,dist}
-let jobMarker=null;
-const input={ left:false, right:false, gas:false, brake:false, clutch:false };
-let selectedMode='auto';
-let handedMode='two', steerTarget=0, steerActive=false, steerStartX=0, cruiseSet=40;
-let curLanes=1;
-let lastRoadHit=null; // кеш результату nearestRoad() цього кадру (дедуп — SPEED читає це замість повторного виклику)
+
+
+
+
+ // {from,to,stage:'pickup'|'deliver',fromMk,toMk,dist}
+
+
+
+
+
+ // кеш результату nearestRoad() цього кадру (дедуп — SPEED читає це замість повторного виклику)
 function laneChange(dir){ // -1 = лівіше (до осі), +1 = правіше (до узбіччя)
-  if(!roadsOnly || curLanes<2) return;
+  if(!state.roadsOnly || state.curLanes<2) return;
   const old=car.lane;
-  car.lane=Math.max(0,Math.min(curLanes-1, car.lane+dir));
-  if(car.lane!==old){ window.SFX&&window.SFX.play('blinker'); toast(`Смуга ${car.lane+1} із ${curLanes}`); }
+  car.lane=Math.max(0,Math.min(state.curLanes-1, car.lane+dir));
+  if(car.lane!==old){ window.SFX&&window.SFX.play('blinker'); toast(`Смуга ${car.lane+1} із ${state.curLanes}`); }
 }
-let segments=[], grid=new Map(), GRID=60;
-let fuelMarks=[], churchMarks=[], stations=[];
-let lastT=0;
+
+
+
 
 // ================= ДОРОГИ (сегменти + сітка) =================
 function buildRoads(roads){
@@ -209,7 +189,7 @@ function nearestRoad(x,y,stickyName){
 // ================= POI =================
 function poiIcon(cls,emoji){ return L.divIcon({ className:'', iconSize:[30,30], iconAnchor:[15,30],
   html:`<div class="poi ${cls}"><span>${emoji}</span></div>` }); }
-let sensPoi=null;
+
 function addPOIs(pois){
   pois.fuel.forEach(f=>{ const price=BRAND_PRICE[f.name]||74.0;
     stations.push({...f, a95:price, lpg:LPG_PRICE});
@@ -220,8 +200,8 @@ function addPOIs(pois){
     const r=Math.max(CFG.radioR, (nr?nr.dist:0)+30);
     churchMarks.push({...c, r,
     mk:L.marker([c.lat,c.lng],{icon:poiIcon('church','⛪')}).addTo(map)}); });
-  if(pois.sens){ sensPoi=pois.sens;
-    L.marker([sensPoi.lat,sensPoi.lng],{icon:poiIcon('sens','📚')}).addTo(map); }
+  if(pois.sens){ state.sensPoi=pois.sens;
+    L.marker([state.sensPoi.lat,state.sensPoi.lng],{icon:poiIcon('sens','📚')}).addTo(map); }
 }
 
 // ================= РАДІО (Сенс / церква) =================
@@ -239,7 +219,7 @@ const RADIO_TEXT={
         "І прости нам провини наші, як і ми прощаємо винуватцям нашим.",
         "І не введи нас у спокусу, але визволи нас від лукавого. Амінь."]
 };
-let radio={on:false,type:null,audio:null};
+
 // ID відео з ОФІЦІЙНОГО каналу Стерненка для радіо «Сенс» (офіційний YouTube-embed:
 // звук стрімиться з його каналу, нічого не копіюється). Заповнюється власником гри.
 const SENS_YT=[];
@@ -249,12 +229,9 @@ function openYt(){ const ids=SENS_YT.filter(Boolean); if(!ids.length) return fal
   document.getElementById('ytBox').classList.remove('hidden'); return true; }
 function closeYt(){ document.getElementById('ytFrame').src=''; document.getElementById('ytBox').classList.add('hidden'); }
 document.getElementById('ytClose').addEventListener('click',()=>stopRadio());
-let AC=null;
-function ac(){ if(!AC){ const C=window.AudioContext||window.webkitAudioContext; AC=new C(); } if(AC.state==='suspended') AC.resume(); return AC; }
-function bell(freq,t0,dur,vol){ if(window.MUTED) return; const a=ac(); const o=a.createOscillator(), g=a.createGain();
-  o.type='sine'; o.frequency.value=freq; o.connect(g); g.connect(a.destination);
-  g.gain.setValueAtTime(vol,t0); g.gain.exponentialRampToValueAtTime(0.001,t0+dur);
-  o.start(t0); o.stop(t0+dur); }
+
+
+
 function churchBells(){ const t=ac().currentTime+0.05; [523,392,330,392,523].forEach((f,i)=>bell(f,t+i*0.9,2.4,0.22)); }
 function sensJingle(){ const t=ac().currentTime+0.05; [660,880,990].forEach((f,i)=>bell(f,t+i*0.18,0.5,0.18)); }
 function speakLines(lines){ if(window.MUTED) return true;
@@ -291,29 +268,29 @@ function stopRadio(){
   radio.on=false; radio.type=null;
   const b=document.getElementById('radioBtn'); b.classList.remove('on'); b.textContent='📻 Радіо';
 }
-let radioNearType=null;
+
 function updateRadio(lat,lng){
   let t=null;
-  if(sensPoi && dist(lat,lng,sensPoi.lat,sensPoi.lng)<CFG.radioR) t='sens';
+  if(state.sensPoi && dist(lat,lng,state.sensPoi.lat,state.sensPoi.lng)<CFG.radioR) t='sens';
   if(!t){ for(const c of churchMarks){ if(dist(lat,lng,c.lat,c.lng)<(c.r||CFG.radioR)){ t='church'; break; } } }
-  radioNearType=t;
+  state.radioNearType=t;
   if(radio.on && !t) stopRadio();               // від'їхав — радіо згасає
   const b=document.getElementById('radioBtn');
   b.style.display = (t||radio.on) ? 'block' : 'none';
 }
 document.getElementById('radioBtn').addEventListener('click',()=>{
-  if(radio.on) stopRadio(); else if(radioNearType) startRadio(radioNearType);
+  if(radio.on) stopRadio(); else if(state.radioNearType) startRadio(state.radioNearType);
 });
 if('speechSynthesis' in window){ speechSynthesis.getVoices(); speechSynthesis.onvoiceschanged=()=>speechSynthesis.getVoices(); }
 
 // ================= МУЛЬТИПЛЕЄР (публічний MQTT-брокер) =================
 // Канал публічний (best-effort): передаються лише нік і позиція котика в грі.
-const MP_BROKERS=['wss://broker.emqx.io:8084/mqtt','wss://broker.hivemq.com:8884/mqtt'];
-let mpEnabled=false;
+
+
 const mp={on:false,client:null,id:'k'+Math.random().toString(36).slice(2,9),
           nick:'Котик',room:'obolon',ghosts:new Map(),pubT:null,pruneT:null,brokerIdx:0,base:''};
 function hueOf(id){ let h=0; for(const ch of id) h=(h*31+ch.charCodeAt(0))%360; return h; }
-function esc(s){ return String(s).replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
+
 function ghostIcon(n,hue){ return L.divIcon({className:'',iconSize:[40,46],iconAnchor:[20,23],
   html:`<div style="text-align:center"><div style="font-size:9px;font-weight:800;background:rgba(20,22,26,.85);color:#fff;border-radius:6px;padding:1px 5px;margin-bottom:1px;white-space:nowrap;max-width:64px;overflow:hidden">${esc(n)}</div><div style="width:16px;height:26px;margin:0 auto;background:hsl(${hue},85%,55%);border-radius:6px 6px 7px 7px;border:2px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.4)"></div></div>`}); }
 function mpStart(){
@@ -324,7 +301,7 @@ function mpStart(){
   mp.base='kotikobolon/'+mp.room;
   connectBroker();
   clearInterval(mp.pubT); clearInterval(mp.pruneT);
-  mp.pubT=setInterval(()=>{ if(mp.on && phase==='play' && mp.client && mp.client.connected){
+  mp.pubT=setInterval(()=>{ if(mp.on && state.phase==='play' && mp.client && mp.client.connected){
     mp.client.publish(mp.base+'/pos', JSON.stringify({id:mp.id,n:mp.nick,x:+car.x.toFixed(1),y:+car.y.toFixed(1)})); } },150);
   mp.pruneT=setInterval(mpPrune,2000);
 }
@@ -363,62 +340,61 @@ function mpPrune(){ const now=performance.now(); for(const [id,g] of mp.ghosts){
 function updateMpChip(){ const c=document.getElementById('mpChip');
   if(mp.on){ c.classList.remove('hidden'); c.textContent='👥 '+(1+mp.ghosts.size); } else c.classList.add('hidden'); }
 document.getElementById('mpToggle').addEventListener('click',()=>{
-  mpEnabled=!mpEnabled;
+  state.mpEnabled=!state.mpEnabled;
   const b=document.getElementById('mpToggle');
-  b.textContent='👥 Грати разом: '+(mpEnabled?'увімк':'вимк');
-  b.classList.toggle('on',mpEnabled);
+  b.textContent='👥 Грати разом: '+(state.mpEnabled?'увімк':'вимк');
+  b.classList.toggle('on',state.mpEnabled);
 });
 try{ document.getElementById('mpNick').value=localStorage.getItem('mpNick')||'';
      document.getElementById('mpRoom').value=localStorage.getItem('mpRoom')||'obolon'; }catch(_){ }
 
 // ================= ЕКОНОМІКА / ПАЛИВО =================
-function rangeKm(){ return (fuel / CFG.consCity) * 100; }
+function rangeKm(){ return (state.fuel / CFG.consCity) * 100; }
 function useFuel(distM){
   let rate=CFG.consCity;
-  if(fuelType==='LPG') rate*=1.12;        // газ: дешевший, але витрата вища (+12%)
-  if(blessing>0) rate*=0.85;
-  fuel=Math.max(0, fuel - (rate/100)*(distM/1000));
+  if(state.fuelType==='LPG') rate*=1.12;        // газ: дешевший, але витрата вища (+12%)
+  if(state.blessing>0) rate*=0.85;
+  state.fuel=Math.max(0, state.fuel - (rate/100)*(distM/1000));
 }
 function dist(aLat,aLng,bLat,bLng){ return map.distance([aLat,aLng],[bLat,bLng]); }
 
 // ================= ЗАВДАННЯ =================
 function newJob(){
-  if(job){ toast('Спершу заверши поточне замовлення'); return; }
+  if(state.job){ toast('Спершу заверши поточне замовлення'); return; }
   let a=LANDMARKS[Math.floor(Math.random()*LANDMARKS.length)], b;
   do{ b=LANDMARKS[Math.floor(Math.random()*LANDMARKS.length)]; }while(b===a);
   const d=dist(a.lat,a.lng,b.lat,b.lng)/1000;
-  job={ from:a, to:b, stage:'pickup', distKm:d, fare:Math.round(CFG.jobBase+CFG.jobPerKm*d) };
+  state.job={ from:a, to:b, stage:'pickup', distKm:d, fare:Math.round(CFG.jobBase+CFG.jobPerKm*d) };
   document.getElementById('jobBtn').classList.add('on');
   setJobMarker(a);
   toast(`📦 Забери посилку: ${a.name}`);
 }
 function setJobMarker(pt){
-  if(jobMarker) map.removeLayer(jobMarker);
-  jobMarker=L.marker([pt.lat,pt.lng],{icon:poiIcon('job','📦')}).addTo(map);
+  if(state.jobMarker) map.removeLayer(state.jobMarker);
+  state.jobMarker=L.marker([pt.lat,pt.lng],{icon:poiIcon('job','📦')}).addTo(map);
 }
 function checkJob(lat,lng){
-  if(!job) return;
-  const tgt = job.stage==='pickup'? job.from : job.to;
+  if(!state.job) return;
+  const tgt = state.job.stage==='pickup'? state.job.from : state.job.to;
   if(dist(lat,lng,tgt.lat,tgt.lng) < CFG.arrive){
-    if(job.stage==='pickup'){ job.stage='deliver'; setJobMarker(job.to);
-      toast(`Везіть до: ${job.to.name} (${job.fare} грн)`); }
-    else{ money+=job.fare; window.SFX&&window.SFX.play('cash'); window.SAVE&&window.SAVE.addEarned(job.fare); toast(`✅ Доставлено! +${job.fare} грн`); fmEvent('job'); window.PROGRESSION&&window.PROGRESSION.event('delivery');
-      if(jobMarker){ map.removeLayer(jobMarker); jobMarker=null; }
-      job=null; document.getElementById('jobBtn').classList.remove('on'); }
+    if(state.job.stage==='pickup'){ state.job.stage='deliver'; setJobMarker(state.job.to);
+      toast(`Везіть до: ${state.job.to.name} (${state.job.fare} грн)`); }
+    else{ state.money+=state.job.fare; window.SFX&&window.SFX.play('cash'); window.SAVE&&window.SAVE.addEarned(state.job.fare); toast(`✅ Доставлено! +${state.job.fare} грн`); fmEvent('job'); window.PROGRESSION&&window.PROGRESSION.event('delivery');
+      if(state.jobMarker){ map.removeLayer(state.jobMarker); state.jobMarker=null; }
+      state.job=null; document.getElementById('jobBtn').classList.remove('on'); }
   }
 }
 
 // ================= UI =================
-let bannerT;
-function toast(msg){ const b=document.getElementById('bannerMsg'); b.textContent=msg; b.classList.add('show');
-  clearTimeout(bannerT); bannerT=setTimeout(()=>b.classList.remove('show'),3400); }
+
+
 function updateHUD(){
   try{
-    const moneyTxt=String(Math.round(money));
+    const moneyTxt=String(Math.round(state.money));
     if(hudCache.money!==moneyTxt){ hudCache.money=moneyTxt; document.getElementById('money').textContent=moneyTxt; }
     const speedTxt=String(Math.round(Math.abs(car.speed)));
     if(hudCache.speed!==speedTxt){ hudCache.speed=speedTxt; document.getElementById('speed').textContent=speedTxt; }
-    const pct=Math.max(0,Math.min(1,fuel/CFG.tank));
+    const pct=Math.max(0,Math.min(1,state.fuel/CFG.tank));
     const widthTxt=(pct*100)+'%';
     const bgTxt = pct<0.15?'#d93a34':(pct<0.3?'#e8a33a':'#2eb35c');
     if(hudCache.fuelW!==widthTxt || hudCache.fuelBg!==bgTxt){
@@ -446,7 +422,7 @@ function updateHUD(){
 }
 
 // контекстна кнопка (АЗС / церква)
-let ctxAction=null;
+
 function setCtxBtn(btn,txt,disp){
   if(hudCache.ctxTxt!==txt){ hudCache.ctxTxt=txt; btn.textContent=txt; }
   if(hudCache.ctxDisp!==disp){ hudCache.ctxDisp=disp; btn.style.display=disp; }
@@ -455,55 +431,55 @@ function updateCtx(lat,lng){
   const btn=document.getElementById('ctx');
   // заглухлий двигун (механіка) — завести
   if(car.mode==='manual' && !car.engineRunning && Math.abs(car.speed)<8){
-    setCtxBtn(btn,'🔑 Завести двигун','block'); ctxAction=startEngine; return;
+    setCtxBtn(btn,'🔑 Завести двигун','block'); state.ctxAction=startEngine; return;
   }
   // АЗС
   let near=null;
   for(const s of stations){ if(dist(lat,lng,s.lat,s.lng)<CFG.arrive){ near={type:'fuel',s}; break; } }
   if(!near) for(const c of churchMarks){ if(dist(lat,lng,c.lat,c.lng)<CFG.arrive){ near={type:'church',c}; break; } }
   if(near && Math.abs(car.speed)<8){
-    if(near.type==='fuel'){ setCtxBtn(btn,'⛽ Заправитись','block'); ctxAction=()=>openFuel(near.s); }
-    else{ const ready=churchCd<=0; setCtxBtn(btn, ready?'⛪ Зайти до храму':'⛪ Вже сьогодні','block'); ctxAction=ready?visitChurch:null; }
-  } else { setCtxBtn(btn,hudCache.ctxTxt||'','none'); ctxAction=null; }
+    if(near.type==='fuel'){ setCtxBtn(btn,'⛽ Заправитись','block'); state.ctxAction=()=>openFuel(near.s); }
+    else{ const ready=state.churchCd<=0; setCtxBtn(btn, ready?'⛪ Зайти до храму':'⛪ Вже сьогодні','block'); state.ctxAction=ready?visitChurch:null; }
+  } else { setCtxBtn(btn,hudCache.ctxTxt||'','none'); state.ctxAction=null; }
 }
-function visitChurch(){ if(churchCd>0) return; money+=CFG.churchBonus; blessing=1; churchCd=CFG.churchCooldownSec; window.SFX&&window.SFX.play('cash');
+function visitChurch(){ if(state.churchCd>0) return; state.money+=CFG.churchBonus; state.blessing=1; state.churchCd=CFG.churchCooldownSec; window.SFX&&window.SFX.play('cash');
   toast(`🙏 +${CFG.churchBonus} грн · Благословення дороги (−15% пального)`); fmEvent('church'); window.PROGRESSION&&window.PROGRESSION.event('church'); window.SAVE&&window.SAVE.save(); }
 
-function openFuel(s){ phase='fuel';
+function openFuel(s){ state.phase='fuel';
   document.getElementById('fuelStation').textContent='АЗС '+s.name;
-  document.getElementById('fuelNow').textContent=fuel.toFixed(1);
-  document.getElementById('fuelMoney').textContent=Math.round(money);
+  document.getElementById('fuelNow').textContent=state.fuel.toFixed(1);
+  document.getElementById('fuelMoney').textContent=Math.round(state.money);
   document.getElementById('priceA95').textContent=s.a95.toFixed(2)+' грн/л';
   document.getElementById('priceLPG').textContent=s.lpg.toFixed(2)+' грн/л';
   document.getElementById('fuelPanel').classList.remove('hidden');
   fuelPanel._s=s;
 }
 function doRefuel(kind){ const s=fuelPanel._s; const price = kind==='LPG'?s.lpg:s.a95;
-  const need=CFG.tank-fuel;
+  const need=CFG.tank-state.fuel;
   let liters, cost;
   if(kind==='500'){ liters=Math.min(500/s.a95, need); cost=liters*s.a95; }
   else { liters=need; cost=liters*price; }
-  if(cost>money){ liters=money/price; cost=money; }
-  money-=cost; fuel+=liters;
-  if(kind==='LPG'){ fuelType='LPG'; } else { fuelType='A95'; }
+  if(cost>state.money){ liters=state.money/price; cost=state.money; }
+  state.money-=cost; state.fuel+=liters;
+  if(kind==='LPG'){ state.fuelType='LPG'; } else { state.fuelType='A95'; }
   toast(`Залито ${liters.toFixed(1)} л ${kind==='LPG'?'газу':'А-95'} на ${Math.round(cost)} грн`);
   fmEvent('refuel'); window.SAVE&&window.SAVE.save();
   closeFuel();
 }
-function closeFuel(){ document.getElementById('fuelPanel').classList.add('hidden'); phase='play'; }
+function closeFuel(){ document.getElementById('fuelPanel').classList.add('hidden'); state.phase='play'; }
 const fuelPanel=document.getElementById('fuelPanel');
 
 // ================= ЦИКЛ =================
 function tick(now){
   requestAnimationFrame(tick);
-  if(phase!=='play'){ lastT=now; window.AUDIO&&window.AUDIO.step(0.016); return; }
-  let dt=(now-lastT)/1000; lastT=now; if(dt<=0) return; if(dt>0.05) dt=0.05;
+  if(state.phase!=='play'){ state.lastT=now; window.AUDIO&&window.AUDIO.step(0.016); return; }
+  let dt=(now-state.lastT)/1000; state.lastT=now; if(dt<=0) return; if(dt>0.05) dt=0.05;
   step(dt); window.AUDIO&&window.AUDIO.step(dt);
 }
 function step(dt){
-  if(handedMode==='one'){
+  if(state.handedMode==='one'){
     // кермуємо ◀▶, гальмуємо; авто саме розганяється до заданої макс. швидкості
-    if(car.engineRunning && fuel>0 && !input.brake && Math.abs(car.speed)<cruiseSet) input.gas=true;
+    if(car.engineRunning && state.fuel>0 && !input.brake && Math.abs(car.speed)<state.cruiseSet) input.gas=true;
     else if(!input.brake) input.gas=false;
   }
   if(input.left)  car.heading-=CFG.turn*dt;
@@ -511,7 +487,7 @@ function step(dt){
   // зчеплення (плавно) + трансмісія (авто/механіка)
   if(car.mode==='manual'){ const tgt=input.clutch?1:0; car.clutch+=(tgt-car.clutch)*(input.clutch?14:4)*dt; car.clutch=Math.max(0,Math.min(1,car.clutch)); }
   updateDrivetrain(dt);
-  if(fuel<=0) toastLowFuelMaybe();
+  if(state.fuel<=0) toastLowFuelMaybe();
 
   const mps=car.speed/3.6, distM=mps*dt;
   car.x+=distM*Math.sin(car.heading); car.y+=distM*Math.cos(car.heading);
@@ -519,9 +495,9 @@ function step(dt){
   window.PROGRESSION&&window.PROGRESSION.event('km', Math.abs(distM)/1000);
 
   // режим «лише по дорогах» — м'яко притягуємо до найближчої дороги + вирівнюємо курс
-  if(roadsOnly){
+  if(state.roadsOnly){
     const r=nearestRoad(car.x,car.y, car.roadName);
-    lastRoadHit=r||null;
+    state.lastRoadHit=r||null;
     if(r){
       car.roadName=r.name;
       // напрям руху вздовж дороги (з двох — ближчий до курсу)
@@ -538,19 +514,19 @@ function step(dt){
       const dx2=car.x-tx, dy2=car.y-ty;
       if(dx2*dx2+dy2*dy2>14*14){ car.x=tx; car.y=ty; }        // задалеко — жорстко в смугу
       else { const k=Math.min(1,dt*10); car.x+=(tx-car.x)*k; car.y+=(ty-car.y)*k; }
-      const steering=(input.left||input.right||Math.abs(steerTarget)>0.15);
+      const steering=(input.left||input.right||Math.abs(state.steerTarget)>0.15);
       const align=steering?dt*1.5:dt*5;   // менше вирівнювання під час керма (щоб можна було повертати)
       car.heading+=diff*Math.min(1,align);
-      curLanes=lanes;
+      state.curLanes=lanes;
       const nm = r.name || (r.svc ? 'двір · проїзд' : '—');
       streetName(nm + (lanes>1 && !r.svc ? ` · смуга ${car.lane+1}/${lanes}` : ''));
     }
-  } else { curLanes=1; lastRoadHit=null; streetName('вільний режим'); }
+  } else { state.curLanes=1; state.lastRoadHit=null; streetName('вільний режим'); }
 
   // паливо / бонуси / кулдауни
-  if(Math.abs(car.speed)>0.5) useFuel(Math.abs(distM)); else if(car.engineRunning) fuel=Math.max(0,fuel-CFG.idleLh/3600*dt);
-  if(churchCd>0) churchCd-=dt;
-  if(blessing>0) blessing-=distM/1000/10; // тане за 10 км
+  if(Math.abs(car.speed)>0.5) useFuel(Math.abs(distM)); else if(car.engineRunning) state.fuel=Math.max(0,state.fuel-CFG.idleLh/3600*dt);
+  if(state.churchCd>0) state.churchCd-=dt;
+  if(state.blessing>0) state.blessing-=distM/1000/10; // тане за 10 км
 
   const p=fromXY(car.x,car.y);
   map.setView([p.lat,p.lng],CFG.zoom,{animate:false});
@@ -568,11 +544,11 @@ function step(dt){
   window.PASSENGERS&&window.PASSENGERS.step(dt);
   updateHUD();
 }
-let lowShown=false;
-function toastLowFuelMaybe(){ if(!lowShown && fuel<=0){ lowShown=true; toast('⛽ Пусто! Дійди пішки або заправся.'); fmEvent('lowFuel'); } }
-let curStreet='';
-let hudCache={}; // кеш останніх записаних значень DOM у updateHUD/updateCtx — пишемо лише коли змінилось
-function streetName(n){ if(n!==curStreet){ curStreet=n; document.getElementById('street').firstElementChild.textContent=n||'—'; } }
+
+function toastLowFuelMaybe(){ if(!state.lowShown && state.fuel<=0){ state.lowShown=true; toast('⛽ Пусто! Дійди пішки або заправся.'); fmEvent('lowFuel'); } }
+
+ // кеш останніх записаних значень DOM у updateHUD/updateCtx — пишемо лише коли змінилось
+function streetName(n){ if(n!==state.curStreet){ state.curStreet=n; document.getElementById('street').firstElementChild.textContent=n||'—'; } }
 requestAnimationFrame(tick);
 
 // ================= ВВІД =================
@@ -586,21 +562,21 @@ function bindSteer(id,key,dir){
   const b=document.getElementById(id); let downAt=0, timer=null, held=false;
   b.addEventListener('pointerdown',e=>{ e.preventDefault(); try{b.setPointerCapture(e.pointerId);}catch(_){}
     downAt=performance.now(); held=false;
-    if(roadsOnly && phase==='play' && curLanes>1){
+    if(state.roadsOnly && state.phase==='play' && state.curLanes>1){
       timer=setTimeout(()=>{ held=true; input[key]=true; }, CFG.holdMs);   // кермо після затримки
     } else { held=true; input[key]=true; }                                  // вільний режим — одразу кермо
   });
   const up=e=>{ e.preventDefault(); clearTimeout(timer);
     const wasTap=!held && (performance.now()-downAt)<CFG.holdMs;
     input[key]=false;
-    if(wasTap && phase==='play') laneChange(dir); };
+    if(wasTap && state.phase==='play') laneChange(dir); };
   b.addEventListener('pointerup',up); b.addEventListener('pointercancel',up);
 }
 bindSteer('left','left',-1); bindSteer('right','right',1);
 const steerKeyState={};
 function steerKeyDown(key,dir){
   if(steerKeyState[key]) return; steerKeyState[key]={at:performance.now(),held:false,timer:null};
-  if(roadsOnly && phase==='play' && curLanes>1)
+  if(state.roadsOnly && state.phase==='play' && state.curLanes>1)
     steerKeyState[key].timer=setTimeout(()=>{ steerKeyState[key].held=true; input[key]=true; }, CFG.holdMs);
   else { steerKeyState[key].held=true; input[key]=true; }
 }
@@ -608,7 +584,7 @@ function steerKeyUp(key,dir){
   const st=steerKeyState[key]; if(!st) return; clearTimeout(st.timer);
   const wasTap=!st.held && (performance.now()-st.at)<CFG.holdMs;
   input[key]=false; delete steerKeyState[key];
-  if(wasTap && phase==='play') laneChange(dir);
+  if(wasTap && state.phase==='play') laneChange(dir);
 }
 // механіка: зчеплення (утримання) + передачі + вибір режиму
 (function(){ const cb=document.getElementById('clutchBtn');
@@ -618,8 +594,8 @@ function steerKeyUp(key,dir){
 document.getElementById('gearUp').addEventListener('click',()=>shiftGear(1));
 document.getElementById('gearDown').addEventListener('click',()=>shiftGear(-1));
 const mA=document.getElementById('modeAuto'), mM=document.getElementById('modeManual');
-mA.addEventListener('click',()=>{ selectedMode='auto'; mA.classList.add('on'); mM.classList.remove('on'); });
-mM.addEventListener('click',()=>{ selectedMode='manual'; mM.classList.add('on'); mA.classList.remove('on'); });
+mA.addEventListener('click',()=>{ state.selectedMode='auto'; mA.classList.add('on'); mM.classList.remove('on'); });
+mM.addEventListener('click',()=>{ state.selectedMode='manual'; mM.classList.add('on'); mA.classList.remove('on'); });
 const km={ArrowLeft:'left',ArrowRight:'right',ArrowUp:'gas',ArrowDown:'brake',a:'left',d:'right',w:'gas',s:'brake',c:'clutch',ф:'left',в:'right',ц:'gas',і:'brake',с:'clutch'};
 addEventListener('keydown',e=>{ const k=km[e.key]; if(k){ e.preventDefault();
     if(k==='left'||k==='right'){ if(!e.repeat) steerKeyDown(k, k==='left'?-1:1); }
@@ -631,36 +607,36 @@ addEventListener('keyup',e=>{ const k=km[e.key]; if(k){ e.preventDefault();
     if(k==='left'||k==='right') steerKeyUp(k, k==='left'?-1:1);
     else input[k]=false; }});
 
-document.getElementById('modeBtn').addEventListener('click',()=>{ roadsOnly=!roadsOnly;
-  const b=document.getElementById('modeBtn'); b.classList.toggle('on',!roadsOnly);
-  b.innerHTML = roadsOnly?'🛣️<small>ДОРОГИ</small>':'🗺️<small>БУДЬ-ДЕ</small>';
-  toast(roadsOnly?'Режим: лише по дорогах':'Режим: їзда будь-де'); });
+document.getElementById('modeBtn').addEventListener('click',()=>{ state.roadsOnly=!state.roadsOnly;
+  const b=document.getElementById('modeBtn'); b.classList.toggle('on',!state.roadsOnly);
+  b.innerHTML = state.roadsOnly?'🛣️<small>ДОРОГИ</small>':'🗺️<small>БУДЬ-ДЕ</small>';
+  toast(state.roadsOnly?'Режим: лише по дорогах':'Режим: їзда будь-де'); });
 document.getElementById('jobBtn').addEventListener('click',newJob);
 // ===== керування однією рукою (тягни-кермуй + автогаз) =====
 (function(){ const z=document.getElementById('steerZone');
-  z.addEventListener('pointerdown',e=>{ e.preventDefault(); steerActive=true; steerStartX=e.clientX; try{z.setPointerCapture(e.pointerId);}catch(_){ } });
-  z.addEventListener('pointermove',e=>{ if(!steerActive) return; const dx=e.clientX-steerStartX; steerTarget=Math.max(-1,Math.min(1, dx/(window.innerWidth*0.22))); });
-  const off=()=>{ steerActive=false; steerTarget=0; };
+  z.addEventListener('pointerdown',e=>{ e.preventDefault(); state.steerActive=true; state.steerStartX=e.clientX; try{z.setPointerCapture(e.pointerId);}catch(_){ } });
+  z.addEventListener('pointermove',e=>{ if(!state.steerActive) return; const dx=e.clientX-state.steerStartX; state.steerTarget=Math.max(-1,Math.min(1, dx/(window.innerWidth*0.22))); });
+  const off=()=>{ state.steerActive=false; state.steerTarget=0; };
   z.addEventListener('pointerup',off); z.addEventListener('pointercancel',off); })();
-function applyHanded(){ const one=handedMode==='one';
+function applyHanded(){ const one=state.handedMode==='one';
   document.getElementById('steerZone').classList.add('hidden');       // без перетягування
   document.getElementById('steerHint').classList.add('hidden');
   document.getElementById('left').style.display='';                   // стрілки лишаються — ними кермуємо
   document.getElementById('right').style.display='';
   document.getElementById('gas').style.display=one?'none':'';         // у 1 руку газ автоматичний — кнопки нема
   document.getElementById('spdBtn').classList.toggle('hidden', !one);
-  document.getElementById('spdVal').textContent=cruiseSet;
+  document.getElementById('spdVal').textContent=state.cruiseSet;
   const hb=document.getElementById('handBtn'); hb.innerHTML=one?'🖐️<small>1 РУКА</small>':'✌️<small>2 РУКИ</small>'; hb.classList.toggle('on',one);
-  if(one){ selectedMode='auto'; if(car&&'mode' in car) car.mode='auto';
+  if(one){ state.selectedMode='auto'; if(car&&'mode' in car) car.mode='auto';
     document.getElementById('modeAuto').classList.add('on'); document.getElementById('modeManual').classList.remove('on');
     document.getElementById('manualCtl').classList.add('hidden'); document.getElementById('gearChip').classList.add('hidden'); input.gas=false; }
 }
 window.applyHanded=applyHanded;
-document.getElementById('handBtn').addEventListener('click',()=>{ handedMode=handedMode==='one'?'two':'one'; applyHanded(); });
+document.getElementById('handBtn').addEventListener('click',()=>{ state.handedMode=state.handedMode==='one'?'two':'one'; applyHanded(); });
 document.getElementById('spdBtn').addEventListener('click',()=>{ const opts=[30,40,50,58];
-  cruiseSet=opts[(opts.indexOf(cruiseSet)+1)%opts.length]; document.getElementById('spdVal').textContent=cruiseSet;
-  toast('Макс. швидкість: '+cruiseSet+' км/год'); });
-document.getElementById('ctx').addEventListener('click',()=>{ if(ctxAction) ctxAction(); });
+  state.cruiseSet=opts[(opts.indexOf(state.cruiseSet)+1)%opts.length]; document.getElementById('spdVal').textContent=state.cruiseSet;
+  toast('Макс. швидкість: '+state.cruiseSet+' км/год'); });
+document.getElementById('ctx').addEventListener('click',()=>{ if(state.ctxAction) state.ctxAction(); });
 document.getElementById('fullA95').addEventListener('click',()=>doRefuel('A95'));
 document.getElementById('fullLPG').addEventListener('click',()=>doRefuel('LPG'));
 document.getElementById('fuel500').addEventListener('click',()=>doRefuel('500'));
@@ -679,50 +655,50 @@ const SEQ=[
  {tap:'🚦 Увімкни лівий поворотник', short:'Поворотник', flag:'blinker', done:'Поворотник блимає'},
  {auto:800, msg:'🚀 Рушаємо! Щасливої дороги, котику.'},
 ];
-let seqIdx=0, seqTimer=null;
-function initGame(){ if(handedMode==='one') selectedMode='auto';
-  car={x:0,y:0,heading:0,speed:0,engineRunning:false,belt:false,
-  mode:selectedMode, gear:0, clutch:1, rpm:0, gearDisp:'N', stallT:0, lane:99};
-  fuel=CFG.startFuel; money=CFG.startMoney; churchCd=0; blessing=0; job=null; lowShown=false;
-  document.getElementById('manualCtl').classList.toggle('hidden', selectedMode!=='manual');
-  document.getElementById('gearChip').classList.toggle('hidden', selectedMode!=='manual');
+
+function initGame(){ if(state.handedMode==='one') state.selectedMode='auto';
+  resetCar({x:0,y:0,heading:0,speed:0,engineRunning:false,belt:false,
+  mode:state.selectedMode, gear:0, clutch:1, rpm:0, gearDisp:'N', stallT:0, lane:99});
+  state.fuel=CFG.startFuel; state.money=CFG.startMoney; state.churchCd=0; state.blessing=0; state.job=null; state.lowShown=false;
+  document.getElementById('manualCtl').classList.toggle('hidden', state.selectedMode!=='manual');
+  document.getElementById('gearChip').classList.toggle('hidden', state.selectedMode!=='manual');
   document.getElementById('jobBtn').classList.remove('on'); updateHUD(); }
 function startGame(){ initGame(); window.SAVE&&window.SAVE.applyRestore(); car.engineRunning=true; car.belt=true; window.SFX&&window.SFX.play('engine_start');   // швидкий старт (фолбек/тест)
-  if(mpEnabled && !mp.on) mpStart();
+  if(state.mpEnabled && !mp.on) mpStart();
   document.getElementById('startScreen').classList.add('hidden'); document.getElementById('seq').classList.add('hidden');
-  phase='play'; lastT=performance.now(); window.applyHanded&&window.applyHanded();
+  state.phase='play'; state.lastT=performance.now(); window.applyHanded&&window.applyHanded();
   window.ONBOARDING&&window.ONBOARDING.enterPlay();
   try{ var _a=document.getElementById('actions'); if(_a) _a.style.display=''; }catch(e){} }
 function startSequence(){ initGame();
-  if(mpEnabled && !mp.on) mpStart();
+  if(state.mpEnabled && !mp.on) mpStart();
   document.getElementById('startScreen').classList.add('hidden');
   const p=fromXY(0,0); map.setView([p.lat,p.lng],CFG.zoom,{animate:false});
-  phase='sequence'; seqIdx=0; document.getElementById('seq').classList.remove('hidden'); runSeqStep();
+  state.phase='sequence'; state.seqIdx=0; document.getElementById('seq').classList.remove('hidden'); runSeqStep();
   try{ var _a=document.getElementById('actions'); if(_a) _a.style.display='none'; }catch(e){} }
 function runSeqStep(){
-  if(seqIdx>=SEQ.length){ finishSequence(); return; }
-  const s=SEQ[seqIdx];
+  if(state.seqIdx>=SEQ.length){ finishSequence(); return; }
+  const s=SEQ[state.seqIdx];
   document.getElementById('seqStep').textContent = s.tap || s.msg;
   document.getElementById('seqSub').textContent = '';
   renderSeqList();
   const btn=document.getElementById('seqBtn');
   if(s.tap){ btn.classList.remove('hidden'); }
-  else { btn.classList.add('hidden'); clearTimeout(seqTimer); seqTimer=setTimeout(()=>{ seqIdx++; runSeqStep(); }, s.auto); }
+  else { btn.classList.add('hidden'); clearTimeout(state.seqTimer); state.seqTimer=setTimeout(()=>{ state.seqIdx++; runSeqStep(); }, s.auto); }
 }
-function seqAction(){ const s=SEQ[seqIdx]; if(!s || !s.tap) return;
+function seqAction(){ const s=SEQ[state.seqIdx]; if(!s || !s.tap) return;
   if(s.flag==='belt'){ car.belt=true; window.SFX&&window.SFX.play('belt'); }
   if(s.flag==='engine'){ car.engineRunning=true; window.SFX&&window.SFX.play('engine_start'); }
   if(s.flag==='gear' && car.mode==='manual'){ car.gear=1; car.clutch=1; }
   if(s.flag==='blinker') window.SFX&&window.SFX.play('blinker');
   document.getElementById('seqSub').textContent = s.done || '';
   document.getElementById('seqBtn').classList.add('hidden');
-  seqIdx++; clearTimeout(seqTimer); seqTimer=setTimeout(runSeqStep, 420); }
+  state.seqIdx++; clearTimeout(state.seqTimer); state.seqTimer=setTimeout(runSeqStep, 420); }
 function renderSeqList(){ const items=SEQ.map((s,i)=>({s,i})).filter(o=>o.s.tap);
   document.getElementById('seqList').innerHTML = items.map(o=>{
-    const cls=o.i<seqIdx?'done':(o.i===seqIdx?'cur':'');
+    const cls=o.i<state.seqIdx?'done':(o.i===state.seqIdx?'cur':'');
     return `<span class="it ${cls}">${o.s.short}</span>`; }).join(''); }
 function finishSequence(){ window.SAVE&&window.SAVE.applyRestore(); document.getElementById('seq').classList.add('hidden');
-  car.engineRunning=true; window.SFX&&window.SFX.play('engine_start'); phase='play'; lastT=performance.now(); window.applyHanded&&window.applyHanded();
+  car.engineRunning=true; window.SFX&&window.SFX.play('engine_start'); state.phase='play'; state.lastT=performance.now(); window.applyHanded&&window.applyHanded();
   window.ONBOARDING&&window.ONBOARDING.enterPlay();
   try{ var _a=document.getElementById('actions'); if(_a) _a.style.display=''; }catch(e){}
   if(car.mode==='manual'){ car.gear=1;
@@ -885,7 +861,7 @@ function fmActiveNow(){
   try{
     if(!FM.on) return false;
     if(fmDucked) return false;
-    if(typeof phase !== 'undefined' && phase !== 'play') return false;
+    if(typeof state.phase !== 'undefined' && state.phase !== 'play') return false;
     if(typeof radio !== 'undefined' && radio && radio.on) return false;
     return true;
   }catch(_){ return false; }
@@ -1007,7 +983,7 @@ function fmEvent(type){
 function fmStep(dt){
   try{
     if(!FM.on) return;
-    if(typeof phase !== 'undefined' && phase !== 'play') return;
+    if(typeof state.phase !== 'undefined' && state.phase !== 'play') return;
     const suppressed = fmDucked || (typeof radio !== 'undefined' && radio && radio.on);
     if(suppressed){
       if(!fmWasSuppressed){ fmWasSuppressed = true; fmStopSpeaking(); } // скасувати ОДИН раз на межі, не щокадру
@@ -1302,7 +1278,7 @@ function fmUnduck(){
     if(elHL) elHL.style.opacity = nowNight ? '1' : '0';
     if(nowNight && !prevIsNight){
       try{
-        var okPhase = (typeof phase === 'undefined') || phase === 'play';
+        var okPhase = (typeof state.phase === 'undefined') || state.phase === 'play';
         if(okPhase && typeof toast === 'function') toast('💡 Увімкнув фари');
         if(okPhase) window.PROGRESSION && window.PROGRESSION.event('night_drive');
       }catch(e){ /* ignore */ }
@@ -1442,13 +1418,13 @@ function fmUnduck(){
     var stat = saved || {};
     return {
       v:SAVE_VERSION,
-      money: isNum(money) ? money : CFG.startMoney,
-      fuel: isNum(fuel) ? fuel : CFG.startFuel,
-      fuelType: (fuelType==='LPG') ? 'LPG' : 'A95',
-      selectedMode: (selectedMode==='manual') ? 'manual' : 'auto',
-      handedMode: (handedMode==='one') ? 'one' : 'two',
-      roadsOnly: !!roadsOnly,
-      cruiseSet: isNum(cruiseSet) ? cruiseSet : 40,
+      money: isNum(state.money) ? state.money : CFG.startMoney,
+      fuel: isNum(state.fuel) ? state.fuel : CFG.startFuel,
+      fuelType: (state.fuelType==='LPG') ? 'LPG' : 'A95',
+      selectedMode: (state.selectedMode==='manual') ? 'manual' : 'auto',
+      handedMode: (state.handedMode==='one') ? 'one' : 'two',
+      roadsOnly: !!state.roadsOnly,
+      cruiseSet: isNum(state.cruiseSet) ? state.cruiseSet : 40,
       totalKm: isNum(stat.totalKm) ? stat.totalKm : 0,
       totalEarned: isNum(stat.totalEarned) ? stat.totalEarned : 0,
       sessions: isNum(stat.sessions) ? stat.sessions : 0
@@ -1494,15 +1470,15 @@ function fmUnduck(){
   function applyRestore(){
     try{
       if(!hasSave || !saved) return; // нема збереження → перший запуск, лишаємо дефолти initGame()
-      money = isNum(saved.money) ? saved.money : money;
-      fuel = isNum(saved.fuel) ? saved.fuel : fuel;
-      if(fuel > CFG.tank) fuel = CFG.tank;     // захист від битих/старих значень понад бак
-      if(fuel < 2) fuel = 2;                    // захист від застрягання: завжди можна доїхати до АЗС
-      fuelType = (saved.fuelType==='LPG') ? 'LPG' : 'A95';
-      selectedMode = (saved.selectedMode==='manual') ? 'manual' : 'auto';
-      handedMode = (saved.handedMode==='one') ? 'one' : 'two';
-      roadsOnly = !!saved.roadsOnly;
-      cruiseSet = isNum(saved.cruiseSet) ? saved.cruiseSet : cruiseSet;
+      state.money = isNum(saved.money) ? saved.money : state.money;
+      state.fuel = isNum(saved.fuel) ? saved.fuel : state.fuel;
+      if(state.fuel > CFG.tank) state.fuel = CFG.tank;     // захист від битих/старих значень понад бак
+      if(state.fuel < 2) state.fuel = 2;                    // захист від застрягання: завжди можна доїхати до АЗС
+      state.fuelType = (saved.fuelType==='LPG') ? 'LPG' : 'A95';
+      state.selectedMode = (saved.selectedMode==='manual') ? 'manual' : 'auto';
+      state.handedMode = (saved.handedMode==='one') ? 'one' : 'two';
+      state.roadsOnly = !!saved.roadsOnly;
+      state.cruiseSet = isNum(saved.cruiseSet) ? saved.cruiseSet : state.cruiseSet;
       if(typeof updateHUD==='function') updateHUD();
     }catch(_){ }
   }
@@ -1533,7 +1509,7 @@ function fmUnduck(){
         totalKm: isNum(s.totalKm) ? s.totalKm : 0,
         totalEarned: isNum(s.totalEarned) ? s.totalEarned : 0,
         sessions: isNum(s.sessions) ? s.sessions : 0,
-        money: isNum(money) ? Math.round(money) : 0
+        money: isNum(state.money) ? Math.round(state.money) : 0
       };
     }catch(_){ return { totalKm:0, totalEarned:0, sessions:0, money:0 }; }
   }
@@ -1542,7 +1518,7 @@ function fmUnduck(){
   function wipe(){
     try{
       try{ localStorage.removeItem(SAVE_KEY); }catch(_){ }
-      money = CFG.startMoney; fuel = CFG.startFuel; fuelType = 'A95';
+      state.money = CFG.startMoney; state.fuel = CFG.startFuel; state.fuelType = 'A95';
       saved = null; hasSave = false;
       saveNow(); // одразу пишемо чисте збереження (нульова статистика), щоб стара не ожила
       if(typeof updateHUD==='function') updateHUD();
@@ -1793,7 +1769,7 @@ function fmUnduck(){
   function ensureConnected(){
     try{
       if(!window.TRACES.enabled || mqttUnavailable || mqttClient) return;
-      if(typeof phase==='undefined' || phase!=='play') return;
+      if(typeof state.phase==='undefined' || state.phase!=='play') return;
       if(!window.mqtt){ mqttUnavailable=true; applyEnabledVisual(); return; }
       connectMqtt();
     }catch(e){}
@@ -1892,7 +1868,7 @@ function fmUnduck(){
       if(now - lastCreateAt < COOLDOWN_MS){ toastSafe('🐾 Зачекай трохи перед новим слідом'); return false; }
       if(!canCreateToday()){ toastSafe('🐾 На сьогодні слідів досить — повертайся завтра'); return false; }
       if(type==='coffee'){
-        if(typeof money!=='number' || money < typeDef.cost){ toastSafe('☕ Не вистачає грошей на каву (40 грн)'); return false; }
+        if(typeof state.money!=='number' || state.money < typeDef.cost){ toastSafe('☕ Не вистачає грошей на каву (40 грн)'); return false; }
         if(!nearAnyStation()){ toastSafe('☕ Каву можна лишити лише біля АЗС'); return false; }
       }
       if(!mqttClient || !mqttClient.connected){ toastSafe('🐾 Немає звʼязку — слід не надіслано'); return false; }
@@ -1902,7 +1878,7 @@ function fmUnduck(){
                        x:+car.x.toFixed(1), y:+car.y.toFixed(1), t:now, exp:exp };
       try{ mqttClient.publish(TOPIC_BASE+id, JSON.stringify(payload), {retain:true, qos:0}); }
       catch(e){ toastSafe('🐾 Не вдалось надіслати слід'); return false; }
-      if(type==='coffee'){ try{ money -= typeDef.cost; updateHUD(); }catch(e){} }
+      if(type==='coffee'){ try{ state.money -= typeDef.cost; updateHUD(); }catch(e){} }
       lastCreateAt = now;
       bumpDailyCounter();
       markMine(id, exp);
@@ -1946,7 +1922,7 @@ function fmUnduck(){
       if(!t){ nearCoffeeId=null; updateClaimButtonVisibility(); return; }
       var d = t.data;
       markCoffeeClaimed(id);
-      if(typeof money==='number'){ money += 40; try{ updateHUD(); }catch(e){} }
+      if(typeof state.money==='number'){ state.money += 40; try{ updateHUD(); }catch(e){} }
       try{ window.SFX&&window.SFX.play('cash'); }catch(e){}
       toastSafe('☕ Кава забрана!'+(d.msg ? (' «'+d.msg+'»') : '')+' +40 грн');
       removeTraceMarker(id); tracesById.delete(id);
@@ -1960,7 +1936,7 @@ function fmUnduck(){
     try{
       if(!elClaim) return;
       var show = window.TRACES.enabled && !!nearCoffeeId &&
-                 (typeof phase==='undefined' || phase==='play');
+                 (typeof state.phase==='undefined' || state.phase==='play');
       elClaim.style.display = show ? 'block' : 'none';
     }catch(e){}
   }
@@ -2040,7 +2016,7 @@ function fmUnduck(){
     parts.push(trOptHtml('beauty', TYPES.beauty.emoji+' '+TYPES.beauty.label, false));
     parts.push(trOptHtml('warn',   TYPES.warn.emoji+' '+TYPES.warn.label, false));
     var canLeaveCoffee = nearAnyStation();
-    var haveMoney = (typeof money==='number') && money >= TYPES.coffee.cost;
+    var haveMoney = (typeof state.money==='number') && state.money >= TYPES.coffee.cost;
     if(canLeaveCoffee){
       var lbl = TYPES.coffee.emoji+' '+TYPES.coffee.label+' — '+TYPES.coffee.cost+' грн'+(haveMoney?'':' (не вистачає)');
       parts.push(trOptHtml('coffee', lbl, !haveMoney));
@@ -2146,7 +2122,7 @@ function fmUnduck(){
     try{
       ensureConnected();
       if(!window.TRACES.enabled){ if(elClaim) elClaim.style.display='none'; return; }
-      if(typeof phase==='undefined' || phase!=='play'){ if(elClaim) elClaim.style.display='none'; return; }
+      if(typeof state.phase==='undefined' || state.phase!=='play'){ if(elClaim) elClaim.style.display='none'; return; }
       var d = (typeof dt==='number' && dt>0 && dt<1) ? dt : 0.016;
       proxAccum += d;
       if(proxAccum >= PROX_EVERY_S){
@@ -2209,7 +2185,7 @@ function fmUnduck(){
       var fmOn = !!(window.FM && window.FM.on);
       var trOn = !!(window.TRACES && window.TRACES.enabled);
       var muted = !!window.MUTED;
-      var roads = (typeof roadsOnly!=='undefined') ? !!roadsOnly : true;
+      var roads = (typeof state.roadsOnly!=='undefined') ? !!state.roadsOnly : true;
       var s = (window.SAVE && window.SAVE.stats) ? window.SAVE.stats() : {totalKm:0,totalEarned:0,sessions:0,money:0};
       var rows = [];
       rows.push('<button class="cta sec'+on(!muted)+'" data-a="sound">'+(muted?'🔇 Звук: вимкнено':'🔊 Звук: увімкнено')+'</button>');
@@ -2242,7 +2218,7 @@ function fmUnduck(){
       if(a==='sound'){ setMuted(!window.MUTED); }
       else if(a==='fm'){ if(typeof fmToggle==='function') fmToggle(); else if(window.FM&&window.FM.toggle) window.FM.toggle(); }
       else if(a==='traces'){ if(window.TRACES&&window.TRACES.setEnabled) window.TRACES.setEnabled(!window.TRACES.enabled); }
-      else if(a==='roads'){ var b=document.getElementById('modeBtn'); if(b) b.click(); else if(typeof roadsOnly!=='undefined') roadsOnly=!roadsOnly; }
+      else if(a==='roads'){ var b=document.getElementById('modeBtn'); if(b) b.click(); else if(typeof state.roadsOnly!=='undefined') state.roadsOnly=!state.roadsOnly; }
       else if(a==='profile'){ close(); if(window.PROGRESSION && window.PROGRESSION.openPanel) window.PROGRESSION.openPanel(); }
       else if(a==='wipe'){ confirmWipe=true; }
       else if(a==='wipeYes'){ confirmWipe=false; if(window.SAVE&&window.SAVE.wipe) window.SAVE.wipe(); }
@@ -2284,8 +2260,8 @@ function fmUnduck(){
   function open(){
     try{
       ensureDom(); confirmWipe=false;
-      if(typeof phase!=='undefined' && phase==='play'){ prevPhase='play'; phase='pause'; paused=true; }
-      else { prevPhase = (typeof phase!=='undefined') ? phase : 'play'; }
+      if(typeof state.phase!=='undefined' && state.phase==='play'){ prevPhase='play'; state.phase='pause'; paused=true; }
+      else { prevPhase = (typeof state.phase!=='undefined') ? state.phase : 'play'; }
       render();
       if(panel) panel.classList.remove('hidden');
     }catch(e){}
@@ -2293,7 +2269,7 @@ function fmUnduck(){
   function close(){
     try{
       if(panel) panel.classList.add('hidden');
-      if(paused && prevPhase==='play'){ phase='play'; try{ lastT = performance.now(); }catch(e){} }
+      if(paused && prevPhase==='play'){ state.phase='play'; try{ state.lastT = performance.now(); }catch(e){} }
       paused=false;
     }catch(e){}
   }
@@ -2408,7 +2384,7 @@ function fmUnduck(){
     try{
       if(!ruleId) return false;
       // під час паузи/меню/заправки штрафи не нараховуємо (як fmStep)
-      if(typeof phase !== 'undefined' && phase !== 'play') return false;
+      if(typeof state.phase !== 'undefined' && state.phase !== 'play') return false;
 
       var rule = ruleFor(ruleId);
       if(!rule) return false; // невідомий ruleId — тихо ігноруємо, гра не падає
@@ -2421,7 +2397,7 @@ function fmUnduck(){
 
       var amount = Math.max(0, Number(rule.fine) || 0);
       try{
-        if(typeof money === 'number'){ money = Math.max(0, money - amount); }
+        if(typeof state.money === 'number'){ state.money = Math.max(0, state.money - amount); }
       }catch(e){}
 
       stats.count += 1; stats.sum += amount;
@@ -2629,7 +2605,7 @@ function fmUnduck(){
       if(!ready || !lights.length) return;
       // step() і так викликається лише під час phase==='play' (гейт у tick()),
       // але дублюємо перевірку — так само, як TRACES.step — про всяк випадок.
-      if(typeof phase !== 'undefined' && phase !== 'play') return;
+      if(typeof state.phase !== 'undefined' && state.phase !== 'play') return;
       if(typeof dt !== 'number' || !isFinite(dt) || dt <= 0) return;
 
       clock += dt;
@@ -2772,8 +2748,8 @@ function fmUnduck(){
   // натомість читає кеш window.lastRoadHit, який step() виставляє щокадру.
   function rawLimitAt(x, y){
     try{
-      if(typeof roadsOnly !== 'undefined' && !roadsOnly) return 50; // вільний режим — завжди «місто»
-      var r = (typeof lastRoadHit !== 'undefined') ? lastRoadHit : null;
+      if(typeof state.roadsOnly !== 'undefined' && !state.roadsOnly) return 50; // вільний режим — завжди «місто»
+      var r = (typeof state.lastRoadHit !== 'undefined') ? state.lastRoadHit : null;
       if(!r) return null; // дороги ще не завантажені / авто поза сіткою — тримаємось попереднього ліміту
       return r.svc ? 20 : 50;
     }catch(e){ return null; }
@@ -2855,7 +2831,7 @@ function fmUnduck(){
   function spdStep(dt){
     try{
       if(!spdInited) ensureDom(); // захист: якщо step() викликали без init() — знак все одно з'явиться
-      if(typeof phase !== 'undefined' && phase !== 'play') return; // поза грою (меню/пауза/заправка) — не рахуємо
+      if(typeof state.phase !== 'undefined' && state.phase !== 'play') return; // поза грою (меню/пауза/заправка) — не рахуємо
       var d = (typeof dt === 'number' && dt > 0 && dt < 1) ? dt : 0.016;
       updateLimit(d);
       updateHud(d);
@@ -3088,7 +3064,7 @@ window.PEDS = (function(){
   // ---------- головний тик (кожен кадр під час phase==='play') ----------
   function step(dt){
     try{
-      if(typeof phase === 'undefined' || phase !== 'play') return;
+      if(typeof state.phase === 'undefined' || state.phase !== 'play') return;
       if(!ready || !crossings.length) return;
       if(typeof car === 'undefined' || typeof map === 'undefined') return;
       if(typeof dt !== 'number' || dt <= 0) return;
@@ -3281,7 +3257,7 @@ window.PEDS = (function(){
       var firstTime=!isSeen(sign.code);
       if(firstTime){
         markSeen(sign.code);
-        try{ if(typeof money==='number'){ money+=BONUS; hudSafe(); } }catch(e){}
+        try{ if(typeof state.money==='number'){ state.money+=BONUS; hudSafe(); } }catch(e){}
         try{ window.SFX&&window.SFX.play('cash'); }catch(e){}
         toastSafe('+'+BONUS+' грн за вивчений знак 🎓 '+sign.code);
         try{ window.PROGRESSION && window.PROGRESSION.event('sign_learned'); }catch(e){}
@@ -3289,7 +3265,7 @@ window.PEDS = (function(){
 
       // ставимо гру на паузу на час читання картки (як фуел-панель/налаштування)
       try{
-        if(typeof phase!=='undefined' && phase==='play'){ prevPhase='play'; phase='signs'; pausedByUs=true; }
+        if(typeof state.phase!=='undefined' && state.phase==='play'){ prevPhase='play'; state.phase='signs'; pausedByUs=true; }
         else { pausedByUs=false; }
       }catch(e){ pausedByUs=false; }
 
@@ -3300,8 +3276,8 @@ window.PEDS = (function(){
     try{
       if(elOverlay) elOverlay.classList.add('hidden');
       try{
-        if(pausedByUs && typeof phase!=='undefined' && phase==='signs'){
-          phase='play'; try{ lastT=performance.now(); }catch(e2){}
+        if(pausedByUs && typeof state.phase!=='undefined' && state.phase==='signs'){
+          state.phase='play'; try{ state.lastT=performance.now(); }catch(e2){}
         }
       }catch(e){}
       pausedByUs=false;
@@ -3324,7 +3300,7 @@ window.PEDS = (function(){
           var mk=L.marker([sign.lat,sign.lng], {icon:signIcon(sign), title:sign.code+' '+sign.name}).addTo(map);
           mk.on('click', function(){
             try{
-              if(typeof phase!=='undefined' && phase!=='play') return; // не лізти поверх іншого оверлея
+              if(typeof state.phase!=='undefined' && state.phase!=='play') return; // не лізти поверх іншого оверлея
               openCard(sign);
             }catch(e){}
           });
@@ -3500,7 +3476,7 @@ window.PEDS = (function(){
   // чи повертається в меню, а не «застрягти» на останній гучності.
   function step(dt){
     try{
-      if(typeof car === 'undefined' || !car || typeof phase === 'undefined') return;
+      if(typeof car === 'undefined' || !car || typeof state.phase === 'undefined') return;
       dt = (typeof dt === 'number' && isFinite(dt) && dt > 0) ? Math.min(dt, 0.1) : 0;
 
       // window.MUTED глушить МИТТЄВО — без плавної інтерполяції.
@@ -3510,7 +3486,7 @@ window.PEDS = (function(){
         return;
       }
 
-      var playing = (phase === 'play');
+      var playing = (state.phase === 'play');
 
       // Ще ніколи не грали (граф не побудований) і зараз не в грі — робити нічого,
       // AudioContext і осцилятори не створюємо завчасно (без жесту гравця).
@@ -4114,14 +4090,14 @@ window.PEDS = (function(){
       clearOffer(); // пасажир уже в салоні — прибираємо маркер очікування
       ride = { p: p, beatIdx: 0, timer: null };
       try{
-        if(typeof phase !== 'undefined' && phase === 'play') phase = 'ride';
+        if(typeof state.phase !== 'undefined' && state.phase === 'play') state.phase = 'ride';
       }catch(e){}
       if(!p.beats || !p.beats.length){ finishRide(); return; } // захист від порожніх даних
       renderBeat(0);
       if(el.overlay) el.overlay.classList.remove('hidden');
     }catch(e){
       // навіть якщо старт зламався — не лишаємо гру заблокованою у 'ride'
-      try{ if(typeof phase !== 'undefined' && phase === 'ride'){ phase = 'play'; lastT = performance.now(); } }catch(e2){}
+      try{ if(typeof state.phase !== 'undefined' && state.phase === 'ride'){ state.phase = 'play'; state.lastT = performance.now(); } }catch(e2){}
       ride = null;
     }
   }
@@ -4134,13 +4110,13 @@ window.PEDS = (function(){
       if(el.overlay) el.overlay.classList.add('hidden');
     }catch(e){}
     try{
-      if(typeof phase !== 'undefined' && phase === 'ride'){ phase = 'play'; lastT = performance.now(); }
+      if(typeof state.phase !== 'undefined' && state.phase === 'ride'){ state.phase = 'play'; state.lastT = performance.now(); }
     }catch(e){}
     try{
       if(p){
         var bonus = (typeof p.fareBonus === 'number' && p.fareBonus > 0) ? p.fareBonus : 0;
         if(bonus > 0){
-          try{ if(typeof money === 'number') money += bonus; }catch(e){}
+          try{ if(typeof state.money === 'number') state.money += bonus; }catch(e){}
           try{ window.SAVE && window.SAVE.addEarned && window.SAVE.addEarned(bonus); }catch(e){}
         }
         hudSafe();
@@ -4185,11 +4161,11 @@ window.PEDS = (function(){
   function step(dt){
     try{
       if(!inited) return;
-      if(typeof phase === 'undefined') return;
+      if(typeof state.phase === 'undefined') return;
       // step() і так викликається лише під час phase==='play' (гейт у tick()/step()
       // головного циклу — там само, де TRACES/LIGHTS/SPEED/PEDS), але дублюємо
       // перевірку, як це роблять сусідні модулі, про всяк випадок.
-      if(phase !== 'play') return;
+      if(state.phase !== 'play') return;
       var d = (typeof dt === 'number' && dt > 0 && dt < 1) ? dt : 0.016;
 
       if(ride) return; // діалог відкритий (не мало б статись — phase тоді вже не 'play')
@@ -4438,7 +4414,7 @@ window.FMQUESTS = (function(){
     try{
       var r = (typeof n === 'number' && isFinite(n) && n > 0) ? n : 0;
       if(r > 0){
-        money += r;
+        state.money += r;
         try{ window.SAVE && window.SAVE.addEarned && window.SAVE.addEarned(r); }catch(e){}
         try{ window.SAVE && window.SAVE.save && window.SAVE.save(); }catch(e){}
         try{ updateHUD(); }catch(e){}
@@ -4504,7 +4480,7 @@ window.FMQUESTS = (function(){
   }
   function step(dt){
     try{
-      if(typeof phase === 'undefined' || phase !== 'play') return;
+      if(typeof state.phase === 'undefined' || state.phase !== 'play') return;
       if(typeof dt !== 'number' || dt <= 0) return;
 
       // активний об'єктив перевіряємо незалежно від стану FM/радіо — щоб гравець
@@ -4876,9 +4852,9 @@ window.FMQUESTS = (function(){
   // (напр. відкрито з панелі SETTINGS) — тоді нічого з phase не чіпаємо.
   function openPanel(){
     try{
-      if(typeof phase === 'undefined') return;
-      if(phase==='play'){ phase='progress'; pausedByUs=true; }
-      else if(phase==='pause'){ pausedByUs=false; }
+      if(typeof state.phase === 'undefined') return;
+      if(state.phase==='play'){ state.phase='progress'; pausedByUs=true; }
+      else if(state.phase==='pause'){ pausedByUs=false; }
       else { return; } // інші фази (меню/заправка/знаки/послідовність) — не лізем поверх
       ensureDom();
       render();
@@ -4888,9 +4864,9 @@ window.FMQUESTS = (function(){
   function closePanel(){
     try{
       if(panel) panel.classList.add('hidden');
-      if(pausedByUs && typeof phase!=='undefined' && phase==='progress'){
-        phase='play';
-        try{ lastT = performance.now(); }catch(e2){}
+      if(pausedByUs && typeof state.phase!=='undefined' && state.phase==='progress'){
+        state.phase='play';
+        try{ state.lastT = performance.now(); }catch(e2){}
       }
       pausedByUs=false;
     }catch(e){}
@@ -5060,7 +5036,7 @@ window.FMQUESTS = (function(){
           // самозахист: якщо гру вже почали, а явний enterPlay() з
           // якоїсь причини не зачепили — таймер сам себе гасить
           // не пізніше наступного тіку, а не «тікає» весь матч.
-          if(typeof phase !== 'undefined' && phase !== 'menu'){ stopTipRotation(); return; }
+          if(typeof state.phase !== 'undefined' && state.phase !== 'menu'){ stopTipRotation(); return; }
           showRandomTip();
         }catch(e){ stopTipRotation(); }
       }, TIP_ROTATE_MS);
@@ -5162,7 +5138,7 @@ Promise.allSettled([
       try{ buildRoads(roadsRes.value.roads); }catch(e){ notes.push('Помилка обробки доріг'); }
     } else { notes.push('Дороги не завантажились'); }
     if(segments.length===0){
-      roadsOnly=false;
+      state.roadsOnly=false;
       notes.push('режим вільної їзди');
       try{
         var b=document.getElementById('modeBtn');
@@ -5179,21 +5155,9 @@ Promise.allSettled([
   }catch(e){ try{ document.getElementById('loadNote').textContent='Помилка завантаження даних: '+e; }catch(e2){} }
 });
 
+
 // ===== DEV-ТЕСТ-МІСТ (Vite прибирає з прод-збірки: import.meta.env.DEV===false) =====
 if (import.meta.env && import.meta.env.DEV) {
-  window.__game = {
-    startGame, startSequence, finishSequence, step, toast, fmToggle, laneChange,
-    nearestRoad, toXY, fromXY, initGame,
-    get car() { return car; }, set car(v) { car = v; },
-    get money() { return money; }, set money(v) { money = v; },
-    get fuel() { return fuel; }, set fuel(v) { fuel = v; },
-    get fuelType() { return fuelType; }, set fuelType(v) { fuelType = v; },
-    get phase() { return phase; }, set phase(v) { phase = v; },
-    get roadsOnly() { return roadsOnly; }, set roadsOnly(v) { roadsOnly = v; },
-    get selectedMode() { return selectedMode; }, set selectedMode(v) { selectedMode = v; },
-    get handedMode() { return handedMode; }, set handedMode(v) { handedMode = v; },
-    get segments() { return segments; },
-    get input() { return input; },
-    get lastRoadHit() { return lastRoadHit; }, set lastRoadHit(v) { lastRoadHit = v; },
-  };
+  window.__game = { startGame, startSequence, finishSequence, step, toast, fmToggle,
+    laneChange, nearestRoad, toXY, fromXY, initGame, state, input, car, segments };
 }
