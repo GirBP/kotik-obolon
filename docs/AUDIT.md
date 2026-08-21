@@ -1,5 +1,9 @@
 # Аудит проєкту та дорожня карта до комерційного рівня
 
+> **Оновлення (рефакторинг):** пункти про моноліт, відсутність збірки/лінтера/тестів/CI
+> — ✅ ВИРІШЕНО. Код розбито на ES-модулі (`src/core|world|systems|ui`), додано Vite +
+> ESLint + Prettier + Vitest + GitHub Actions (lint→test→build→deploy). Див. [ARCHITECTURE.md](ARCHITECTURE.md), [REFACTOR.md](REFACTOR.md).
+
 **Дата:** аудит проведено на версії `d2b6dbc` · **Оцінка зрілості: прототип (alpha)**
 
 ---

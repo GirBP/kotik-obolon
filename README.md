@@ -52,11 +52,16 @@
 - [docs/PLAN.md](docs/PLAN.md) — план реалізації (пітч → мілстоун, критерії приймання)
 - [docs/GDD.md](docs/GDD.md) — специфікація гри (механіки, економіка, архітектура)
 - [docs/AUDIT.md](docs/AUDIT.md) — аудит стану і дорожня карта до комерційного рівня
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — архітектура коду
+- [CONTRIBUTING.md](CONTRIBUTING.md) — як розробляти
 - [CHANGELOG.md](CHANGELOG.md) — журнал версій
 
 ## Технічне
 
-Один файл `index.html` (HTML + CSS + JS, без збірки і бекенду) + `data/roads.json`
-(417 відрізків доріг) і `data/pois.json` (8 АЗС, 7 храмів). Хоститься на GitHub Pages.
+Статичний Vite-застосунок (ES-модулі + Leaflet), без бекенду. Код у `src/` розбитий на шари:
+`core/` (стан, конфіг, гео, аудіо), `world/` (карта, дороги, POI), `systems/` (16 підсистем),
+`ui/`, `main.js` (ігрове ядро). Дані — `public/data/*.json`. Збірка → `dist/`, автодеплой на
+GitHub Pages через GitHub Actions (lint → test → build → deploy).
 
-Локально: `python3 -m http.server 8000` у теці проєкту → відкрий `http://localhost:8000`.
+**Розробка:** `npm install && npm run dev` (→ localhost:5173). Деталі — [CONTRIBUTING.md](CONTRIBUTING.md)
+та [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

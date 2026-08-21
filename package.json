@@ -1,0 +1,31 @@
+{
+  "name": "kotik-obolon",
+  "version": "0.8.0",
+  "description": "Котик за кермом — Оболонь: веб-симулятор водіння + ПДР України",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"src/**/*.js\" \"*.{js,json,md}\"",
+    "format:check": "prettier --check \"src/**/*.js\""
+  },
+  "devDependencies": {
+    "@babel/parser": "^8.0.4",
+    "@babel/traverse": "^8.0.4",
+    "@babel/types": "^8.0.4",
+    "@eslint/js": "^9.13.0",
+    "eslint": "^9.13.0",
+    "eslint-config-prettier": "^9.1.0",
+    "globals": "^15.11.0",
+    "jsdom": "^25.0.1",
+    "prettier": "^3.3.3",
+    "vite": "^5.4.10",
+    "vitest": "^2.1.4"
+  }
+}
