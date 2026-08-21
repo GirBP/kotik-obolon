@@ -29,6 +29,8 @@
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
   #map{ position:absolute; inset:0; z-index:1; background:#e8e6df; }
   .leaflet-control,.leaflet-top,.leaflet-bottom{ display:none !important; }
+  /* власний рендер світу: ховаємо чужу тайлову підкладку */
+  body.own-world .leaflet-tile-pane > .leaflet-layer:not(.scenery){ display:none !important; }
 
   #car{ position:absolute; left:50%; top:50%; z-index:5; width:26px; height:40px;
         margin:-20px 0 0 -13px; transition:transform .05s linear; pointer-events:none;

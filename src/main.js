@@ -8,6 +8,7 @@ import { map, dist } from './world/map.js';
 import { poiIcon } from './world/markers.js';
 import { buildRoads, nearestRoad } from './world/roads.js';
 import { addPOIs } from './world/pois.js';
+import { addScenery } from './world/scenery.js';
 import { speakLines } from './core/tts.js';
 
 import { updateHUD, setCtxBtn } from './ui/hud.js';
@@ -813,13 +814,22 @@ fmInit(); window.liveInit&&window.liveInit(); window.SAVE&&window.SAVE.load(); w
 // (або сегментів 0), гра лишається керованою — вимикаємо roadsOnly і попереджаємо.
 Promise.allSettled([
   fetch('data/roads.json').then(r=>{ if(!r.ok) throw new Error('roads http '+r.status); return r.json(); }),
-  fetch('data/pois.json').then(r=>{ if(!r.ok) throw new Error('pois http '+r.status); return r.json(); })
-]).then(([roadsRes, poisRes])=>{
+  fetch('data/pois.json').then(r=>{ if(!r.ok) throw new Error('pois http '+r.status); return r.json(); }),
+  fetch('data/world.json').then(r=>{ if(!r.ok) throw new Error('world http '+r.status); return r.json(); })
+]).then(([roadsRes, poisRes, worldRes])=>{
   try{
     var notes=[];
     if(roadsRes.status==='fulfilled'){
       try{ buildRoads(roadsRes.value.roads); }catch(e){ notes.push('Помилка обробки доріг'); }
     } else { notes.push('Дороги не завантажились'); }
+    // власний рендер світу (будівлі/вода/зелень/дороги). Якщо не вийшло —
+    // лишається тайлова підкладка, тож гра виглядає гірше, але працює.
+    if(worldRes.status==='fulfilled' && roadsRes.status==='fulfilled'){
+      try{
+        addScenery(map, worldRes.value, roadsRes.value.roads);
+        document.body.classList.add('own-world');   // ховає чужі тайли
+      }catch(e){ notes.push('Власний світ не намалювався'); }
+    } else if(worldRes.status!=='fulfilled'){ notes.push('геометрія світу не завантажилась'); }
     if(segments.length===0){
       state.roadsOnly=false;
       notes.push('режим вільної їзди');
