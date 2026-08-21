@@ -81,7 +81,7 @@ import { updateHUD } from '../ui/hud.js';
   function nowMs(){ return (typeof performance!=='undefined' && performance.now) ? performance.now() : Date.now(); }
 
   function toastSafe(msg){ try{ if(typeof toast==='function') toast(msg); }catch(e){} }
-  function hudSafe(){ try{ if(typeof updateHUD==='function') updateHUD(); }catch(e){} }
+  function _hudSafe(){ try{ if(typeof updateHUD==='function') updateHUD(); }catch(e){} }
   function escSafe(s){ try{ return (typeof esc==='function') ? esc(String(s)) : String(s); }catch(e){ return ''; } }
 
   // ---- дефолтний стан ----

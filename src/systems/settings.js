@@ -65,7 +65,7 @@ import { stopRadio } from '../main.js';
     try{
       var a = e.currentTarget.getAttribute('data-a');
       if(a==='sound'){ setMuted(!window.MUTED); }
-      else if(a==='fm'){ if(typeof fmToggle==='function') fmToggle(); else if(window.FM&&window.FM.toggle) window.FM.toggle(); }
+      else if(a==='fm'){ if(window.FM&&window.FM.toggle) window.FM.toggle(); }
       else if(a==='traces'){ if(window.TRACES&&window.TRACES.setEnabled) window.TRACES.setEnabled(!window.TRACES.enabled); }
       else if(a==='roads'){ var b=document.getElementById('modeBtn'); if(b) b.click(); else if(typeof state.roadsOnly!=='undefined') state.roadsOnly=!state.roadsOnly; }
       else if(a==='profile'){ close(); if(window.PROGRESSION && window.PROGRESSION.openPanel) window.PROGRESSION.openPanel(); }

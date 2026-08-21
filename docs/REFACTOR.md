@@ -43,8 +43,8 @@ test/                 # Vitest юніти чистої логіки (geo, drivet
 - [x] **P3. Світ** — world/{map,roads,pois,markers}. Verify.
 - [x] **P4. Системи** — 16 систем у окремі файли `src/systems/*`. Verify після кожної групи.
 - [x] **P5. UI** (hud винесено; решта UI — у main-каркасі) — hud/controls/panels/sequence. Verify.
-- [ ] **P6. Тести** — Vitest юніти чистої логіки; браузер-смоук лишається.
-- [ ] **P7. CI/деплой** — Actions збирає й деплоїть; Pages source → GitHub Actions.
+- [x] **P6. Тести** — Vitest юніти чистої логіки; браузер-смоук лишається.
+- [x] **P7. CI** (lint --max-warnings 0 + 16 тестів зелені) — Actions збирає й деплоїть; Pages source → GitHub Actions.
 - [ ] **P8. Docs** — ARCHITECTURE.md, CONTRIBUTING.md, оновити README/AUDIT.
 - [ ] **P9. Merge** — верифікувати еквівалентність, злити в main, задеплоїти.
 

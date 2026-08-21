@@ -1,8 +1,8 @@
-import { CFG, BRAND_PRICE, LPG_PRICE, GEARS_M, ENG, torqueCurve, LANDMARKS, MP_BROKERS, GRID } from './core/config.js';
+import { CFG, GEARS_M, ENG, torqueCurve, LANDMARKS, MP_BROKERS } from './core/config.js';
 import { toXY, fromXY } from './core/geo.js';
 import { ac, bell } from './core/audio.js';
 import { esc, toast } from './core/dom.js';
-import { state, input, car, resetCar, segments, grid, stations, fuelMarks, churchMarks, radio, hudCache } from './core/state.js';
+import { state, input, car, resetCar, segments, stations, churchMarks, radio, hudCache } from './core/state.js';
 
 import { map, dist } from './world/map.js';
 import { poiIcon } from './world/markers.js';
@@ -188,7 +188,7 @@ if('speechSynthesis' in window){ speechSynthesis.getVoices(); speechSynthesis.on
 // Канал публічний (best-effort): передаються лише нік і позиція котика в грі.
 
 
-const mp={on:false,client:null,id:'k'+Math.random().toString(36).slice(2,9),
+export const mp={on:false,client:null,id:'k'+Math.random().toString(36).slice(2,9),
           nick:'Котик',room:'obolon',ghosts:new Map(),pubT:null,pruneT:null,brokerIdx:0,base:''};
 function hueOf(id){ let h=0; for(const ch of id) h=(h*31+ch.charCodeAt(0))%360; return h; }
 
@@ -229,7 +229,7 @@ function connectBroker(){
     mp.client.on('offline',()=>{ mp.on=false; });
   }catch(e){}
 }
-function mpStop(){ if(mp.client){ try{ mp.client.publish(mp.base+'/leave',JSON.stringify({id:mp.id})); mp.client.end(true); }catch(_){ } }
+function _mpStop(){ if(mp.client){ try{ mp.client.publish(mp.base+'/leave',JSON.stringify({id:mp.id})); mp.client.end(true); }catch(_){ } }
   mp.client=null; mp.on=false; clearInterval(mp.pubT);
   mp.ghosts.forEach(g=>map.removeLayer(g.mk)); mp.ghosts.clear(); updateMpChip(); }
 function mpGhost(d){ let g=mp.ghosts.get(d.id); const p=fromXY(d.x,d.y);

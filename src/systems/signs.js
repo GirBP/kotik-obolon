@@ -74,7 +74,7 @@ import { map } from '../world/map.js';
   var markers = [];
   var seen = null;               // Set<string> кодів, що вже дали бонус
   var elOverlay=null, elPaw=null, elTitle=null, elCode=null, elText=null, elOk=null;
-  var prevPhase='play', pausedByUs=false;
+  var _prevPhase='play', pausedByUs=false;
 
   // ---- безпечні обгортки ----
   function toastSafe(msg){ try{ if(typeof toast==='function') toast(msg); }catch(e){} }
@@ -168,7 +168,7 @@ import { map } from '../world/map.js';
 
       // ставимо гру на паузу на час читання картки (як фуел-панель/налаштування)
       try{
-        if(typeof state.phase!=='undefined' && state.phase==='play'){ prevPhase='play'; state.phase='signs'; pausedByUs=true; }
+        if(typeof state.phase!=='undefined' && state.phase==='play'){ _prevPhase='play'; state.phase='signs'; pausedByUs=true; }
         else { pausedByUs=false; }
       }catch(e){ pausedByUs=false; }
 

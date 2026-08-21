@@ -6,6 +6,7 @@ import { car, state, stations } from '../core/state.js';
 import { updateHUD } from '../ui/hud.js';
 import { dist, map } from '../world/map.js';
 import { poiIcon } from '../world/markers.js';
+import { mp } from '../main.js';
 
 
 
@@ -91,7 +92,7 @@ import { poiIcon } from '../world/markers.js';
 
   var layer         = null;      // L.layerGroup з усіма маркерами слідів
   var elBtn         = null, elMenu = null, elList = null, elClaim = null;
-  var menuView       = 'root';
+  var _menuView       = 'root';
   var nearCoffeeId   = null;
   var lastCreateAt   = 0;
   var proxAccum      = 0;
@@ -111,7 +112,7 @@ import { poiIcon } from '../world/markers.js';
   }
 
   function getNick(){
-    try{ if(typeof mp!=='undefined' && mp && mp.nick) return String(mp.nick).slice(0,12); }catch(e){}
+    try{ if(mp && mp.nick) return String(mp.nick).slice(0,12); }catch(e){}
     try{ var n=localStorage.getItem('mpNick'); if(n) return String(n).slice(0,12); }catch(e){}
     return 'Котик';
   }
@@ -475,7 +476,7 @@ import { poiIcon } from '../world/markers.js';
   }
 
   function renderRoot(){
-    menuView='root';
+    _menuView='root';
     if(!elList) return;
     var parts=[];
     parts.push(trOptHtml('beauty', TYPES.beauty.emoji+' '+TYPES.beauty.label, false));
@@ -510,7 +511,7 @@ import { poiIcon } from '../world/markers.js';
   }
 
   function renderPhrases(type){
-    menuView=type;
+    _menuView=type;
     var def=TYPES[type];
     if(!elList || !def) return;
     var parts=['<button class="cta sec" id="trBack" style="margin-top:0;">← Назад</button>'];
