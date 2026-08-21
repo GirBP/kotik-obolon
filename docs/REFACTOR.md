@@ -46,7 +46,7 @@ test/                 # Vitest юніти чистої логіки (geo, drivet
 - [x] **P6. Тести** — Vitest юніти чистої логіки; браузер-смоук лишається.
 - [x] **P7. CI** (lint --max-warnings 0 + 16 тестів зелені) — Actions збирає й деплоїть; Pages source → GitHub Actions.
 - [x] **P8. Docs** — ARCHITECTURE.md, CONTRIBUTING.md, оновити README/AUDIT.
-- [ ] **P9. Merge** — верифікувати еквівалентність, злити в main, задеплоїти.
+- [x] **P9. Merge** — злито в main, Pages→Actions, задеплоєно, жива версія перевірена — верифікувати еквівалентність, злити в main, задеплоїти.
 
 ## Критерій готовності кожної фази
 `npm run build` без помилок · `npm test` зелений · браузер: 0 помилок консолі,
