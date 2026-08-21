@@ -45,7 +45,7 @@ test/                 # Vitest юніти чистої логіки (geo, drivet
 - [x] **P5. UI** (hud винесено; решта UI — у main-каркасі) — hud/controls/panels/sequence. Verify.
 - [x] **P6. Тести** — Vitest юніти чистої логіки; браузер-смоук лишається.
 - [x] **P7. CI** (lint --max-warnings 0 + 16 тестів зелені) — Actions збирає й деплоїть; Pages source → GitHub Actions.
-- [ ] **P8. Docs** — ARCHITECTURE.md, CONTRIBUTING.md, оновити README/AUDIT.
+- [x] **P8. Docs** — ARCHITECTURE.md, CONTRIBUTING.md, оновити README/AUDIT.
 - [ ] **P9. Merge** — верифікувати еквівалентність, злити в main, задеплоїти.
 
 ## Критерій готовності кожної фази
