@@ -6,7 +6,7 @@ import { car, state, stations } from '../core/state.js';
 import { updateHUD } from '../ui/hud.js';
 import { dist, map } from '../world/map.js';
 import { poiIcon } from '../world/markers.js';
-import { mp } from '../main.js';
+import { mp } from './multiplayer.js';
 
 
 

@@ -1,7 +1,7 @@
-import { CFG, GEARS_M, ENG, torqueCurve, LANDMARKS, MP_BROKERS } from './core/config.js';
+import { CFG, GEARS_M, ENG, torqueCurve, LANDMARKS } from './core/config.js';
 import { toXY, fromXY } from './core/geo.js';
 import { ac, bell } from './core/audio.js';
-import { esc, toast } from './core/dom.js';
+import { toast } from './core/dom.js';
 import { state, input, car, resetCar, segments, stations, churchMarks, radio, hudCache } from './core/state.js';
 
 import { map, dist } from './world/map.js';
@@ -26,6 +26,7 @@ import './systems/passengers.js';
 import './systems/fmquests.js';
 import './systems/progression.js';
 import './systems/onboarding.js';
+import './systems/multiplayer.js';
 
 // ================= КОНФІГ =================
 
@@ -184,70 +185,7 @@ document.getElementById('radioBtn').addEventListener('click',()=>{
 });
 if('speechSynthesis' in window){ speechSynthesis.getVoices(); speechSynthesis.onvoiceschanged=()=>speechSynthesis.getVoices(); }
 
-// ================= МУЛЬТИПЛЕЄР (публічний MQTT-брокер) =================
-// Канал публічний (best-effort): передаються лише нік і позиція котика в грі.
-
-
-export const mp={on:false,client:null,id:'k'+Math.random().toString(36).slice(2,9),
-          nick:'Котик',room:'obolon',ghosts:new Map(),pubT:null,pruneT:null,brokerIdx:0,base:''};
-function hueOf(id){ let h=0; for(const ch of id) h=(h*31+ch.charCodeAt(0))%360; return h; }
-
-function ghostIcon(n,hue){ return L.divIcon({className:'',iconSize:[40,46],iconAnchor:[20,23],
-  html:`<div style="text-align:center"><div style="font-size:9px;font-weight:800;background:rgba(20,22,26,.85);color:#fff;border-radius:6px;padding:1px 5px;margin-bottom:1px;white-space:nowrap;max-width:64px;overflow:hidden">${esc(n)}</div><div style="width:16px;height:26px;margin:0 auto;background:hsl(${hue},85%,55%);border-radius:6px 6px 7px 7px;border:2px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.4)"></div></div>`}); }
-function mpStart(){
-  if(!window.mqtt){ toast('👥 Мультиплеєр недоступний (не завантажився mqtt)'); return; }
-  mp.nick=(document.getElementById('mpNick').value.trim()||'Котик').slice(0,12);
-  mp.room=(document.getElementById('mpRoom').value.trim().replace(/[^\wа-яіїєґ-]/gi,'')||'obolon').slice(0,16);
-  try{ localStorage.setItem('mpNick',mp.nick); localStorage.setItem('mpRoom',mp.room); }catch(_){ }
-  mp.base='kotikobolon/'+mp.room;
-  connectBroker();
-  clearInterval(mp.pubT); clearInterval(mp.pruneT);
-  mp.pubT=setInterval(()=>{ if(mp.on && state.phase==='play' && mp.client && mp.client.connected){
-    mp.client.publish(mp.base+'/pos', JSON.stringify({id:mp.id,n:mp.nick,x:+car.x.toFixed(1),y:+car.y.toFixed(1)})); } },150);
-  mp.pruneT=setInterval(mpPrune,2000);
-}
-function connectBroker(){
-  if(mp.client) return; // не перестворювати клієнт, якщо вже є (у т.ч. під час реконекту)
-  const url=MP_BROKERS[mp.brokerIdx%MP_BROKERS.length];
-  try{ mp.client=mqtt.connect(url,{clientId:'kotik_'+mp.id,keepalive:30,connectTimeout:6000,
-    will:{topic:mp.base+'/leave',payload:JSON.stringify({id:mp.id}),qos:0,retain:false}}); }
-  catch(_){ return; }
-  mp.client.on('connect',()=>{ mp.on=true;
-    mp.client.subscribe(mp.base+'/pos'); mp.client.subscribe(mp.base+'/leave');
-    toast('👥 Кімната «'+mp.room+'»: підʼєднано'); updateMpChip(); });
-  mp.client.on('message',(t,msg)=>{ try{ const d=JSON.parse(msg.toString());
-    if(!d.id || d.id===mp.id) return;
-    if(t.endsWith('/leave')){ mpDrop(d.id); return; }
-    if(typeof d.x!=='number' || typeof d.y!=='number') return;
-    mpGhost(d); }catch(_){ } });
-  mp.client.on('error',()=>{ if(!mp.on){ try{mp.client.end(true);}catch(_){ }
-    mp.client=null; // дозволяє connectBroker() перестворити клієнт для наступного брокера
-    mp.brokerIdx++; if(mp.brokerIdx<MP_BROKERS.length) connectBroker();
-    else toast('👥 Брокер недоступний — мультиплеєр вимкнено'); } });
-  try{
-    mp.client.on('close',()=>{ mp.on=false; updateMpChip(); });
-    mp.client.on('offline',()=>{ mp.on=false; });
-  }catch(e){}
-}
-function _mpStop(){ if(mp.client){ try{ mp.client.publish(mp.base+'/leave',JSON.stringify({id:mp.id})); mp.client.end(true); }catch(_){ } }
-  mp.client=null; mp.on=false; clearInterval(mp.pubT);
-  mp.ghosts.forEach(g=>map.removeLayer(g.mk)); mp.ghosts.clear(); updateMpChip(); }
-function mpGhost(d){ let g=mp.ghosts.get(d.id); const p=fromXY(d.x,d.y);
-  if(!g){ g={mk:L.marker([p.lat,p.lng],{icon:ghostIcon((d.n||'?').slice(0,12),hueOf(d.id)),interactive:false}).addTo(map),last:0};
-    mp.ghosts.set(d.id,g); updateMpChip(); toast('👥 '+(d.n||'Гравець')+' у кімнаті!'); }
-  g.last=performance.now(); g.mk.setLatLng([p.lat,p.lng]); }
-function mpDrop(id){ const g=mp.ghosts.get(id); if(g){ map.removeLayer(g.mk); mp.ghosts.delete(id); updateMpChip(); } }
-function mpPrune(){ const now=performance.now(); for(const [id,g] of mp.ghosts){ if(now-g.last>6000) mpDrop(id); } }
-function updateMpChip(){ const c=document.getElementById('mpChip');
-  if(mp.on){ c.classList.remove('hidden'); c.textContent='👥 '+(1+mp.ghosts.size); } else c.classList.add('hidden'); }
-document.getElementById('mpToggle').addEventListener('click',()=>{
-  state.mpEnabled=!state.mpEnabled;
-  const b=document.getElementById('mpToggle');
-  b.textContent='👥 Грати разом: '+(state.mpEnabled?'увімк':'вимк');
-  b.classList.toggle('on',state.mpEnabled);
-});
-try{ document.getElementById('mpNick').value=localStorage.getItem('mpNick')||'';
-     document.getElementById('mpRoom').value=localStorage.getItem('mpRoom')||'obolon'; }catch(_){ }
+// (мультиплеєр винесено у systems/multiplayer.js)
 
 // ================= ЕКОНОМІКА / ПАЛИВО =================
 function useFuel(distM){
@@ -332,9 +270,9 @@ const fuelPanel=document.getElementById('fuelPanel');
 // ================= ЦИКЛ =================
 function tick(now){
   requestAnimationFrame(tick);
-  if(state.phase!=='play'){ state.lastT=now; window.AUDIO&&window.AUDIO.step(0.016); return; }
+  if(state.phase!=='play'){ state.lastT=now; window.AUDIO&&window.AUDIO.step(0.016); window.MP&&window.MP.step(); return; }
   let dt=(now-state.lastT)/1000; state.lastT=now; if(dt<=0) return; if(dt>0.05) dt=0.05;
-  step(dt); window.AUDIO&&window.AUDIO.step(dt);
+  step(dt); window.AUDIO&&window.AUDIO.step(dt); window.MP&&window.MP.step();
 }
 function step(dt){
   if(state.handedMode==='one'){
@@ -524,13 +462,13 @@ function initGame(){ if(state.handedMode==='one') state.selectedMode='auto';
   document.getElementById('gearChip').classList.toggle('hidden', state.selectedMode!=='manual');
   document.getElementById('jobBtn').classList.remove('on'); updateHUD(); }
 function startGame(){ initGame(); window.SAVE&&window.SAVE.applyRestore(); car.engineRunning=true; car.belt=true; window.SFX&&window.SFX.play('engine_start');   // швидкий старт (фолбек/тест)
-  if(state.mpEnabled && !mp.on) mpStart();
+  if(state.mpEnabled) window.MP&&window.MP.start();
   document.getElementById('startScreen').classList.add('hidden'); document.getElementById('seq').classList.add('hidden');
   state.phase='play'; state.lastT=performance.now(); window.applyHanded&&window.applyHanded();
   window.ONBOARDING&&window.ONBOARDING.enterPlay();
   try{ var _a=document.getElementById('actions'); if(_a) _a.style.display=''; }catch(e){} }
 function startSequence(){ initGame();
-  if(state.mpEnabled && !mp.on) mpStart();
+  if(state.mpEnabled) window.MP&&window.MP.start();
   document.getElementById('startScreen').classList.add('hidden');
   const p=fromXY(0,0); map.setView([p.lat,p.lng],CFG.zoom,{animate:false});
   state.phase='sequence'; state.seqIdx=0; document.getElementById('seq').classList.remove('hidden'); runSeqStep();
@@ -867,7 +805,7 @@ function fmUnduck(){
 }
 
 
-fmInit(); window.liveInit&&window.liveInit(); window.SAVE&&window.SAVE.load(); window.TRACES&&window.TRACES.init(); window.SETTINGS&&window.SETTINGS.init(); window.POLICE&&window.POLICE.init(); window.LIGHTS&&window.LIGHTS.init(); window.SPEED&&window.SPEED.init(); window.PEDS&&window.PEDS.init(); window.SIGNS&&window.SIGNS.init(); window.AUDIO&&window.AUDIO.init(); window.SFX&&window.SFX.init(); window.PROGRESSION&&window.PROGRESSION.init(); window.PASSENGERS&&window.PASSENGERS.init(); window.FMQUESTS&&window.FMQUESTS.init(); window.ONBOARDING&&window.ONBOARDING.init();
+fmInit(); window.liveInit&&window.liveInit(); window.SAVE&&window.SAVE.load(); window.TRACES&&window.TRACES.init(); window.SETTINGS&&window.SETTINGS.init(); window.POLICE&&window.POLICE.init(); window.LIGHTS&&window.LIGHTS.init(); window.SPEED&&window.SPEED.init(); window.PEDS&&window.PEDS.init(); window.SIGNS&&window.SIGNS.init(); window.AUDIO&&window.AUDIO.init(); window.SFX&&window.SFX.init(); window.PROGRESSION&&window.PROGRESSION.init(); window.PASSENGERS&&window.PASSENGERS.init(); window.FMQUESTS&&window.FMQUESTS.init(); window.ONBOARDING&&window.ONBOARDING.init(); window.MP&&window.MP.init();
 
 // ================= ЗАВАНТАЖЕННЯ ДАНИХ =================
 // N2: roads і pois завантажуються незалежно (allSettled) — падіння одного не
