@@ -274,15 +274,52 @@ function stop() {
   } catch (_) {}
 }
 
+/** Посилання-запрошення в поточну (або задану) кімнату. */
+export function inviteLink(room) {
+  const r = (room || mp.room || 'obolon').slice(0, 16);
+  const u = new URL(location.href);
+  u.search = '?room=' + encodeURIComponent(r);
+  u.hash = '';
+  return u.toString();
+}
+
+/** Поділитися запрошенням (Web Share API → буфер обміну як фолбек). */
+export async function invite() {
+  const link = inviteLink();
+  const text = 'Погнали кататись Оболонню 🐱🚗 Кімната «' + mp.room + '»';
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: 'Котик за кермом', text, url: link });
+      return true;
+    }
+  } catch (_) {
+    return false; // користувач скасував — не показуємо помилку
+  }
+  try {
+    await navigator.clipboard.writeText(text + ' — ' + link);
+    toast('🔗 Посилання скопійовано — кидай друзям!');
+    return true;
+  } catch (_) {
+    toast('🔗 ' + link);
+    return true;
+  }
+}
+
 function init() {
   try {
     if (window.__mpInited) return;
     window.__mpInited = true;
+    // запрошення: ?room=xxx → одразу підставляємо кімнату й вмикаємо спільну гру
+    let invited = null;
+    try {
+      const q = new URLSearchParams(location.search).get('room');
+      if (q) invited = q.replace(/[^\wа-яіїєґ-]/gi, '').slice(0, 16);
+    } catch (_) {}
     const nickEl = document.getElementById('mpNick');
     const roomEl = document.getElementById('mpRoom');
     try {
       if (nickEl) nickEl.value = localStorage.getItem('mpNick') || '';
-      if (roomEl) roomEl.value = localStorage.getItem('mpRoom') || 'obolon';
+      if (roomEl) roomEl.value = invited || localStorage.getItem('mpRoom') || 'obolon';
     } catch (_) {}
     const tgl = document.getElementById('mpToggle');
     if (tgl)
@@ -293,7 +330,14 @@ function init() {
         tgl.classList.toggle('on', mp.enabled);
         if (!mp.enabled) stop();
       });
+    if (invited && tgl) {
+      mp.enabled = true;
+      state.mpEnabled = true;
+      tgl.textContent = '👥 Грати разом: увімк';
+      tgl.classList.add('on');
+      toast('👥 Тебе запросили в кімнату «' + esc(invited) + '» — тисни «Поїхали!»');
+    }
   } catch (_) {}
 }
 
-window.MP = { init, start, stop, step };
+window.MP = { init, start, stop, step, invite, inviteLink };

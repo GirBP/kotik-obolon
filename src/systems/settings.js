@@ -40,6 +40,7 @@ import { stopRadio } from '../main.js';
       rows.push('<button class="cta sec'+on(!muted)+'" data-a="sound">'+(muted?'🔇 Звук: вимкнено':'🔊 Звук: увімкнено')+'</button>');
       rows.push('<button class="cta sec'+on(fmOn)+'" data-a="fm">📻 Оболонь FM: '+(fmOn?'увімк':'вимк')+'</button>');
       rows.push('<button class="cta sec'+on(trOn)+'" data-a="traces">🐾 Сліди сусідів: '+(trOn?'увімк':'вимк')+'</button>');
+      rows.push('<button class="cta sec" data-a="invite">🔗 Запросити друга покататись</button>');
       rows.push('<button class="cta sec'+on(roads)+'" data-a="roads">'+(roads?'🛣️ Рух: лише по дорогах':'🗺️ Рух: будь-де')+'</button>');
       rows.push('<div class="legend" style="margin-top:10px;">'+
         '<b>Твій район у цифрах</b><br>'+
@@ -67,6 +68,7 @@ import { stopRadio } from '../main.js';
       if(a==='sound'){ setMuted(!window.MUTED); }
       else if(a==='fm'){ if(window.FM&&window.FM.toggle) window.FM.toggle(); }
       else if(a==='traces'){ if(window.TRACES&&window.TRACES.setEnabled) window.TRACES.setEnabled(!window.TRACES.enabled); }
+      else if(a==='invite'){ if(window.MP&&window.MP.invite) window.MP.invite(); }
       else if(a==='roads'){ var b=document.getElementById('modeBtn'); if(b) b.click(); else if(typeof state.roadsOnly!=='undefined') state.roadsOnly=!state.roadsOnly; }
       else if(a==='profile'){ close(); if(window.PROGRESSION && window.PROGRESSION.openPanel) window.PROGRESSION.openPanel(); }
       else if(a==='wipe'){ confirmWipe=true; }
