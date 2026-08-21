@@ -40,7 +40,7 @@ test/                 # Vitest юніти чистої логіки (geo, drivet
 - [x] **P0. Каркас інструментів** — package.json, vite/eslint/prettier/vitest конфіги, CI, гілка.
 - [x] **P1. Віндовий крок** — інлайн-`<script>` → `src/main.js` (один модуль, поведінка ідентична), статика → public/. Verify.
 - [x] **P2. Ядро** — виділити core/{config,state,geo,dom,audio,loop}; примітиви → `state.x`. Verify.
-- [ ] **P3. Світ** — world/{map,roads,pois,markers}. Verify.
+- [x] **P3. Світ** — world/{map,roads,pois,markers}. Verify.
 - [ ] **P4. Системи** — 16 систем у окремі файли `src/systems/*`. Verify після кожної групи.
 - [ ] **P5. UI** — hud/controls/panels/sequence. Verify.
 - [ ] **P6. Тести** — Vitest юніти чистої логіки; браузер-смоук лишається.

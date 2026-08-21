@@ -4,6 +4,12 @@ import { ac, bell } from './core/audio.js';
 import { esc, toast } from './core/dom.js';
 import { state, input, car, resetCar, segments, grid, stations, fuelMarks, churchMarks, radio, hudCache } from './core/state.js';
 
+import { map, dist } from './world/map.js';
+import { poiIcon } from './world/markers.js';
+import { buildRoads, nearestRoad } from './world/roads.js';
+import { addPOIs } from './world/pois.js';
+import { speakLines } from './core/tts.js';
+
 // ================= КОНФІГ =================
 
 
@@ -58,19 +64,6 @@ function startEngine(){ if(!car.engineRunning){ if(car.mode==='manual' && car.cl
 // Орієнтири для замовлень (реальні місця Оболоні)
 
 
-// ================= КАРТА =================
-// N4: Leaflet міг не завантажитись (CDN впав) — без цього гравець просто
-// зависає на «Завантаження…» без пояснення.
-if(typeof L==='undefined'){
-  try{ var _ln=document.getElementById('loadNote'); if(_ln) _ln.textContent='Не вдалось завантажити карту (перевір інтернет).'; }catch(e){}
-  throw new Error('no leaflet');
-}
-const canvasR = L.canvas({ padding: 0.4 });
-const map = L.map('map', { center: CFG.center, zoom: CFG.zoom, zoomControl:false, attributionControl:false,
-  dragging:false, scrollWheelZoom:false, doubleClickZoom:false, boxZoom:false, keyboard:false,
-  touchZoom:false, inertia:false, zoomSnap:0, renderer: canvasR });
-L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-  { maxZoom: CFG.zoom, maxNativeZoom: 19, subdomains:'abcd' }).addTo(map);
 
 // ================= ГЕО-ХЕЛПЕРИ (equirectangular XY) =================
 
@@ -101,108 +94,7 @@ function laneChange(dir){ // -1 = лівіше (до осі), +1 = правіш�
 
 
 
-// ================= ДОРОГИ (сегменти + сітка) =================
-function buildRoads(roads){
-  const markings=[];
-  roads.forEach(line=>{ const g=line.g;
-    const lanes=line.l||1, oneway=line.o||0, cls=line.h||'service';
-    const ptsXY=g.map(p=>toXY(p[0],p[1]));
-    for(let i=0;i<g.length-1;i++){
-      const A=ptsXY[i], B=ptsXY[i+1];
-      const dx=B.x-A.x, dy=B.y-A.y, len2=dx*dx+dy*dy;
-      if(len2<0.5) continue;
-      const s={ ax:A.x,ay:A.y,dx,dy,len2, name:line.n||'', l:lanes, o:oneway, svc: cls==='service'?1:0 };
-      const idx=segments.push(s)-1;
-      const x0=Math.min(A.x,B.x), x1=Math.max(A.x,B.x), y0=Math.min(A.y,B.y), y1=Math.max(A.y,B.y);
-      for(let cx=Math.floor(x0/GRID);cx<=Math.floor(x1/GRID);cx++)
-        for(let cy=Math.floor(y0/GRID);cy<=Math.floor(y1/GRID);cy++){
-          const k=cx+','+cy; if(!grid.has(k)) grid.set(k,[]); grid.get(k).push(idx);
-        }
-    }
-    // розмітка — лише на класифікованих дорогах (у дворах її нема)
-    if(cls!=='service' && cls!=='living_street' && ptsXY.length>1){
-      markings.push({pts:ptsXY, lanes, oneway});
-    }
-  });
-  drawMarkings(markings);
-}
 
-// зміщення полілінії на d метрів праворуч від напряму (усереднені нормалі)
-function offsetLine(pts, d){
-  const out=[];
-  for(let i=0;i<pts.length;i++){
-    const p0=pts[Math.max(0,i-1)], p1=pts[Math.min(pts.length-1,i+1)];
-    let nx=p1.y-p0.y, ny=-(p1.x-p0.x);
-    const L=Math.hypot(nx,ny)||1; nx/=L; ny/=L;
-    out.push(fromXY(pts[i].x+nx*d, pts[i].y+ny*d));
-  }
-  return out.map(p=>[p.lat,p.lng]);
-}
-function drawMarkings(ways){
-  const layer=L.layerGroup();
-  const W=CFG.laneW;
-  ways.forEach(w=>{
-    const latlngs=w.pts.map(p=>{ const q=fromXY(p.x,p.y); return [q.lat,q.lng]; });
-    if(w.oneway){
-      // односмугова стрічка: роздільники між смугами, по центру ширини
-      for(let k=1;k<w.lanes;k++){
-        const off=(k - w.lanes/2)*W;
-        L.polyline(offsetLine(w.pts,off), {color:'#fff', weight:1.3, opacity:.85, dashArray:'7,11', interactive:false}).addTo(layer);
-      }
-    } else {
-      // осьова: суцільна (широкі) або переривчаста (вузькі)
-      if(w.lanes>=2)
-        L.polyline(latlngs, {color:'#fff', weight:2.2, opacity:.95, interactive:false}).addTo(layer);
-      else
-        L.polyline(latlngs, {color:'#fff', weight:1.4, opacity:.8, dashArray:'9,13', interactive:false}).addTo(layer);
-      // роздільники смуг у кожному напрямку
-      for(let k=1;k<w.lanes;k++){
-        for(const sgn of [1,-1]){
-          L.polyline(offsetLine(w.pts, sgn*k*W), {color:'#fff', weight:1.2, opacity:.75, dashArray:'7,11', interactive:false}).addTo(layer);
-        }
-      }
-    }
-  });
-  layer.addTo(map);
-}
-function nearestRoad(x,y,stickyName){
-  // score = відстань + штраф двору − бонус «тієї самої вулиці»:
-  // великі дороги не втрачаються через паралельні проїзди, але у двір заїхати можна.
-  const cx=Math.floor(x/GRID), cy=Math.floor(y/GRID);
-  let best=null, bs=Infinity;
-  for(let R=1; R<=6; R++){
-    for(let i=-R;i<=R;i++) for(let j=-R;j<=R;j++){
-      const arr=grid.get((cx+i)+','+(cy+j)); if(!arr) continue;
-      for(const idx of arr){ const s=segments[idx];
-        let t=((x-s.ax)*s.dx+(y-s.ay)*s.dy)/s.len2; t=Math.max(0,Math.min(1,t));
-        const px=s.ax+t*s.dx, py=s.ay+t*s.dy;
-        const d=Math.sqrt((x-px)*(x-px)+(y-py)*(y-py));
-        let score=d + (s.svc?9:0);
-        if(stickyName && s.name && s.name===stickyName) score-=7;
-        if(score<bs){ bs=score; best={px,py,dist:d,ang:Math.atan2(s.dx,s.dy),name:s.name,l:s.l||1,o:s.o||0,svc:s.svc||0}; }
-      }}
-    if(best) break;
-  }
-  return best;
-}
-
-// ================= POI =================
-function poiIcon(cls,emoji){ return L.divIcon({ className:'', iconSize:[30,30], iconAnchor:[15,30],
-  html:`<div class="poi ${cls}"><span>${emoji}</span></div>` }); }
-
-function addPOIs(pois){
-  pois.fuel.forEach(f=>{ const price=BRAND_PRICE[f.name]||74.0;
-    stations.push({...f, a95:price, lpg:LPG_PRICE});
-    fuelMarks.push(L.marker([f.lat,f.lng],{icon:poiIcon('fuel','⛽')}).addTo(map)); });
-  pois.churches.forEach(c=>{
-    // персональний радіус: храм може стояти в глибині кварталу — рахуємо від найближчої дороги
-    const xy=toXY(c.lat,c.lng); const nr=nearestRoad(xy.x,xy.y);
-    const r=Math.max(CFG.radioR, (nr?nr.dist:0)+30);
-    churchMarks.push({...c, r,
-    mk:L.marker([c.lat,c.lng],{icon:poiIcon('church','⛪')}).addTo(map)}); });
-  if(pois.sens){ state.sensPoi=pois.sens;
-    L.marker([state.sensPoi.lat,state.sensPoi.lng],{icon:poiIcon('sens','📚')}).addTo(map); }
-}
 
 // ================= РАДІО (Сенс / церква) =================
 // Голосу Стерненка тут НЕМАЄ і не імітується: диктор (TTS) лише згадує співпрацю.
@@ -234,14 +126,6 @@ document.getElementById('ytClose').addEventListener('click',()=>stopRadio());
 
 function churchBells(){ const t=ac().currentTime+0.05; [523,392,330,392,523].forEach((f,i)=>bell(f,t+i*0.9,2.4,0.22)); }
 function sensJingle(){ const t=ac().currentTime+0.05; [660,880,990].forEach((f,i)=>bell(f,t+i*0.18,0.5,0.18)); }
-function speakLines(lines){ if(window.MUTED) return true;
-  if(!('speechSynthesis' in window)) return false;
-  const vs=speechSynthesis.getVoices(); const uk=vs.find(v=>/^uk/i.test(v.lang));
-  if(!uk) return false;
-  speechSynthesis.cancel();
-  lines.forEach(tx=>{ const u=new SpeechSynthesisUtterance(tx); u.voice=uk; u.lang=uk.lang; u.rate=1.0; speechSynthesis.speak(u); });
-  return true;
-}
 function synthRadio(type){
   if(type==='sens'){ sensJingle(); setTimeout(()=>{ if(radio.on&&radio.type==='sens'){ if(!speakLines(RADIO_TEXT.sens)) toast('📻 '+RADIO_TEXT.sens[2]); } },800); }
   else { churchBells(); setTimeout(()=>{ if(radio.on&&radio.type==='church'){ if(!speakLines(RADIO_TEXT.church)) toast('📻 '+RADIO_TEXT.church[0]); } },4200); }
@@ -356,7 +240,6 @@ function useFuel(distM){
   if(state.blessing>0) rate*=0.85;
   state.fuel=Math.max(0, state.fuel - (rate/100)*(distM/1000));
 }
-function dist(aLat,aLng,bLat,bLng){ return map.distance([aLat,aLng],[bLat,bLng]); }
 
 // ================= ЗАВДАННЯ =================
 function newJob(){
