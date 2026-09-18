@@ -58,9 +58,12 @@
 ## Технічне
 
 Статичний Vite-застосунок (ES-модулі + Leaflet), без бекенду. Код у `src/` розбитий на шари:
-`core/` (стан, конфіг, гео, аудіо), `world/` (карта, дороги, POI), `systems/` (16 підсистем),
-`ui/`, `main.js` (ігрове ядро). Дані — `public/data/*.json`. Збірка → `dist/`, автодеплой на
-GitHub Pages через GitHub Actions (lint → test → build → deploy).
+`core/` (стан, конфіг, гео, аудіо, фізика КПП), `world/` (карта, дороги, POI), `systems/`
+(24 підсистеми), `ui/`, `main.js` (бутстрап і цикл гри). Дані — `public/data/*.json`. Збірка →
+`dist/`, автодеплой на GitHub Pages через GitHub Actions (lint → test → build → deploy).
 
 **Розробка:** `npm install && npm run dev` (→ localhost:5173). Деталі — [CONTRIBUTING.md](CONTRIBUTING.md)
 та [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+**Відоме обмеження:** 18 з 24 систем зв'язуються між собою через `window.X` (не ES import),
+див. docs/ARCHITECTURE.md.
