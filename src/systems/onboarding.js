@@ -48,6 +48,8 @@ import { state } from '../core/state.js';
 
   // ---------- безпечні обгортки навколо глобалів гри ----------
   function toastSafe(msg){ try{ if(typeof toast==='function') toast(msg); }catch(e){} }
+  // escSafe — єдиний шлях, яким текст і правило поради потрапляють у DOM.
+  // Пряма вставка t.text чи t.rule в innerHTML в обхід escSafe заборонена.
   function escSafe(s){
     try{ return (typeof esc==='function') ? esc(String(s)) : String(s).replace(/[<>&"']/g,''); }
     catch(e){ return ''; }
@@ -96,6 +98,9 @@ import { state } from '../core/state.js';
 
   function startTipRotation(){
     try{
+      // tipTimer тримає щонайбільше один активний інтервал. stopTipRotation()
+      // завжди гасить його через clearInterval — тут перед новим запуском,
+      // і в самому таймері нижче, коли phase вже не 'menu'.
       stopTipRotation();
       showRandomTip();
       tipTimer = setInterval(function(){
