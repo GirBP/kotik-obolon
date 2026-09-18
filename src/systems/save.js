@@ -3,26 +3,19 @@ import { toast } from '../core/dom.js';
 import { state } from '../core/state.js';
 import { updateHUD } from '../ui/hud.js';
 
-
-
-// старт живих підсистем (Оболонь FM + Київський час)
-
-// ================= 💾 SAVE + 🐾 СЛІДИ СУСІДІВ + ⚙️ НАЛАШТУВАННЯ (v0.6) =================
-// ============================================================
-// 💾 ЗБЕРЕЖЕННЯ ПРОГРЕСУ (SAVE)
-// Для «Котик за кермом» (Оболонь). Вставляється ІНЛАЙН у той самий
-// класичний <script>, що й основна гра — бачить її глобали
-// (money, fuel, fuelType, selectedMode, handedMode, roadsOnly, cruiseSet,
-// CFG, car, phase, toast, updateHUD, applyHanded) і нічого з них не
-// перевизначає. Присвоєння глобалам тут (money=…, fuel=…) міняють саме
-// ту `let`-змінну, що й решта гри, бо модуль живе в тому самому <script>.
+// ================= SAVE =================
+// Збереження прогресу. Вставляється інлайн у той самий класичний <script>,
+// що й основна гра — бачить її глобалі (money, fuel, fuelType, selectedMode,
+// handedMode, roadsOnly, cruiseSet, CFG, car, phase, toast, updateHUD,
+// applyHanded) і нічого з них не перевизначає. Присвоєння глобалям тут
+// (money=…, fuel=…) міняють саме ту `let`-змінну, що й решта гри, бо
+// модуль живе в тому самому <script>.
 //
 // Контракт: window.SAVE = { load, applyRestore, save, addKm, addEarned,
 //           stats, wipe }
 //
 // Усе в try/catch: localStorage може кидати у приватному режимі —
 // тоді граємо без збереження, гра ніколи не падає через це.
-// ============================================================
 (function(){
   'use strict';
 
@@ -37,7 +30,7 @@ import { updateHUD } from '../ui/hud.js';
 
   var saved       = null;   // внутрішній стан: { v, money, fuel, fuelType, selectedMode,
                              //   handedMode, roadsOnly, cruiseSet, totalKm, totalEarned, sessions }
-  var hasSave     = false;  // чи існувало ВАЛІДНЕ збереження до load() (розрізняє «перший запуск»)
+  var hasSave     = false;  // чи існувало валідне збереження до load() (розрізняє «перший запуск»)
   var lastSaveAt  = 0;      // мітка часу останнього фактичного запису в localStorage
   var pendingSave = null;   // setTimeout id відкладеного запису (throttle)
 

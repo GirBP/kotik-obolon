@@ -10,9 +10,8 @@ import { mp } from './multiplayer.js';
 
 
 
-// ============================================================
-// «Сліди сусідів» — теплий соціальний шар (v0.6)
-// ES-модуль (див. імпорти вище); mqtt.js підключений як CDN-глобал (window.mqtt).
+// «Сліди сусідів» — теплий соціальний шар. ES-модуль (див. імпорти вище);
+// mqtt.js підключений як CDN-глобал (window.mqtt).
 //
 // Інші гравці присутні в районі не машинами, а слідами доброти:
 // кожен слід — окремий retained MQTT-топік kotikobolon/traces/<id>.
@@ -22,14 +21,13 @@ import { mp } from './multiplayer.js';
 //
 // Контракт:
 //   window.TRACES.init()        — одноразово при завантаженні (готує
-//                                  кнопку/DOM/стан; MQTT ще НЕ підключає)
+//                                  кнопку/DOM/стан; MQTT ще не підключає)
 //   window.TRACES.step(dt)      — виклик щокадру із step(dt) під час
 //                                  phase==='play' (перший виклик — тригер
 //                                  підключення до MQTT)
-//   window.TRACES.setEnabled(b) — увімк/вимк фічу (persist у localStorage)
+//   window.TRACES.setEnabled(b) — увімк/вимк можливість (persist у localStorage)
 //   window.TRACES.enabled       — поточний прапорець (bool)
 //   window.TRACES.leaveMenu()   — примусово закрити меню вибору сліду
-// ============================================================
 (function(){
   'use strict';
 
@@ -44,7 +42,7 @@ import { mp } from './multiplayer.js';
 
   var DAY_MS = 24*3600*1000;
 
-  // ---------- типи слідів: ГОТОВІ фрази, гравець лише обирає ----------
+  // ---------- типи слідів: готові фрази, гравець лише обирає ----------
   var TYPES = {
     beauty: {
       emoji:'📍', label:'Краса', exp: 7*DAY_MS,
@@ -81,7 +79,7 @@ import { mp } from './multiplayer.js';
   var tracesById    = new Map(); // id -> {data, marker, mine, lat, lng}
   var mineMap       = {};        // id -> expMs (власні сліди; переживає перезавантаження)
   var claimedSet    = new Set(); // id забраних кав
-  var heardHello    = new Set(); // id привітів, почутих ЦІЄЇ сесії
+  var heardHello    = new Set(); // id привітів, почутих цієї сесії
 
   var layer         = null;      // L.layerGroup з усіма маркерами слідів
   var elBtn         = null, elMenu = null, elList = null, elClaim = null;
@@ -137,7 +135,7 @@ import { mp } from './multiplayer.js';
   function isMine(id){ return !!(mineMap && Object.prototype.hasOwnProperty.call(mineMap,id)); }
 
   // ---------- забрані кави (щоб не забрати двічі) ----------
-  // M3: масив інакше росте назавжди — відкидаємо застарілі id (>3 доби; кава й так
+  // масив інакше росте назавжди — відкидаємо застарілі id (>3 доби; кава й так
   // живе лише 2 доби, тож 3 — надійний запас) і підстраховуємось лімітом розміру.
   var CLAIMED_MAX_AGE_MS = 3*DAY_MS;
   var CLAIMED_MAX_COUNT  = 200;
@@ -272,7 +270,7 @@ import { mp } from './multiplayer.js';
     if(changed) saveMine();
   }
 
-  // M1: чужі сліди прострочуються тим самим exp, але їх ніхто локально не прибирав —
+  // чужі сліди прострочуються тим самим exp, але їх ніхто локально не прибирав —
   // без цього tracesById/heardHello ростуть, доки хтось не опублікує порожній payload.
   function pruneForeignExpired(){
     try{

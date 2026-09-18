@@ -8,7 +8,7 @@ import { dist } from '../world/map.js';
 // ================= РАДІО (Сенс / церква) =================
 // Локальне радіо, що вмикається біля книгарні «Сенс» або храмів (на відміну
 // від районної станції Оболонь FM у systems/fm.js — вони взаємно глушать одне одного).
-// Голосу Стерненка тут НЕМАЄ і не імітується: диктор (TTS) лише згадує співпрацю.
+// Голосу Стерненка тут немає і він не імітується: диктор (TTS) лише згадує співпрацю.
 // Якщо покладеш ліцензовані файли assets/radio_sens.mp3 / assets/radio_church.mp3 —
 // гратимуть вони замість синтезу.
 const RADIO_TEXT={
@@ -23,7 +23,7 @@ const RADIO_TEXT={
         "І не введи нас у спокусу, але визволи нас від лукавого. Амінь."]
 };
 
-// ID відео з ОФІЦІЙНОГО каналу Стерненка для радіо «Сенс» (офіційний YouTube-embed:
+// ID відео з офіційного каналу Стерненка для радіо «Сенс» (офіційний YouTube-embed:
 // звук стрімиться з його каналу, нічого не копіюється). Заповнюється власником гри.
 const SENS_YT=[];
 function openYt(){ const ids=SENS_YT.filter(Boolean); if(!ids.length) return false;
@@ -42,7 +42,7 @@ function synthRadio(type){
   else { churchBells(); setTimeout(()=>{ if(radio.on&&radio.type==='church'){ if(!speakLines(RADIO_TEXT.church)) toast('📻 '+RADIO_TEXT.church[0]); } },4200); }
 }
 function startRadio(type){
-  if(window.MUTED) return; // G4: при вимкненому звуці радіо не запускаємо (ні YouTube, ні mp3)
+  if(window.MUTED) return; // при вимкненому звуці радіо не запускаємо (ні YouTube, ні mp3)
   stopRadio(); radio.on=true; radio.type=type;
   document.getElementById('radioBtn').classList.add('on');
   document.getElementById('radioBtn').textContent='📻 Вимкнути';

@@ -222,7 +222,7 @@ addEventListener('resize',()=>map.invalidateSize()); setTimeout(()=>map.invalida
 
 fmInit(); window.liveInit&&window.liveInit(); window.SAVE&&window.SAVE.load(); window.TRACES&&window.TRACES.init(); window.SETTINGS&&window.SETTINGS.init(); window.POLICE&&window.POLICE.init(); window.LIGHTS&&window.LIGHTS.init(); window.SPEED&&window.SPEED.init(); window.PEDS&&window.PEDS.init(); window.SIGNS&&window.SIGNS.init(); window.AUDIO&&window.AUDIO.init(); window.SFX&&window.SFX.init(); window.PROGRESSION&&window.PROGRESSION.init(); window.PASSENGERS&&window.PASSENGERS.init(); window.FMQUESTS&&window.FMQUESTS.init(); window.ONBOARDING&&window.ONBOARDING.init(); window.MP&&window.MP.init(); window.CATRIG&&window.CATRIG.init();
 
-// День↔ніч міняє ПАЛІТРУ світу (а не накладає сіру плівку). Перемикаємо дискретно,
+// День↔ніч міняє палітру світу (а не накладає сіру плівку). Перемикаємо дискретно,
 // лише коли фаза реально змінилась: зміна теми = перемальовка всіх кешованих тайлів.
 let _wasNight = null;
 function applyDayNight(){
@@ -237,7 +237,7 @@ function applyDayNight(){
 }
 
 // ================= ЗАВАНТАЖЕННЯ ДАНИХ =================
-// N2: roads і pois завантажуються незалежно (allSettled) — падіння одного не
+// roads і pois завантажуються незалежно (allSettled) — падіння одного не
 // відкидає інший; кожен fetch перевіряє r.ok; якщо дороги не завантажились
 // (або сегментів 0), гра лишається керованою — вимикаємо roadsOnly і попереджаємо.
 Promise.allSettled([

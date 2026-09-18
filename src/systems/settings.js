@@ -3,14 +3,11 @@ import { stopRadio } from './radio.js';
 
 
 
-// ============================================================
-// ⚙️ НАЛАШТУВАННЯ + ПАУЗА (SETTINGS) — v0.6
-// Вставляється ІНЛАЙН у той самий <script>, що й гра. Бачить глобали
-// (phase, lastT, roadsOnly, toast, updateHUD) і модулі (window.FM/fmToggle,
-// window.TRACES, window.SAVE). Нічого не переоголошує.
+// НАЛАШТУВАННЯ + ПАУЗА (SETTINGS). Вставляється інлайн у той самий <script>,
+// що й гра. Бачить глобалі (phase, lastT, roadsOnly, toast, updateHUD) і
+// модулі (window.FM/fmToggle, window.TRACES, window.SAVE). Нічого не переоголошує.
 // Контракт: window.SETTINGS = { init, open, close, isPaused }
 // Також вводить window.MUTED (гра сама перевіряє його у speakLines/bell).
-// ============================================================
 (function(){
   'use strict';
 

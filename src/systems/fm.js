@@ -3,7 +3,7 @@ import { ac, bell } from '../core/audio.js';
 import { speakLines } from '../core/tts.js';
 import { state, radio } from '../core/state.js';
 
-// ================= 📻 ОБОЛОНЬ FM (v0.5) =================
+// ================= ОБОЛОНЬ FM =================
 // Постійна районна радіостанція (на відміну від локального радіо біля Сенсу/храмів).
 // Контент: data/radio.json; якщо fetch не вдався — працює на вбудованому фолбеці нижче.
 // Контракт: window.FM = { on, init:fmInit, toggle:fmToggle, event:fmEvent, step:fmStep,
@@ -64,7 +64,7 @@ let fmDucked        = false;  // тимчасове примусове мовч�
 let fmWasSuppressed = false;  // чи вже скасували поточну репліку через придушення (щоб не робити це щокадру)
 const fmLastEventAt = Object.create(null); // per-type мітки часу для кулдауну fmEvent
 
-// window.FM визначаємо ОДРАЗУ (а не в кінці файлу): усі функції нижче — звичайні top-level
+// window.FM визначаємо одразу, а не в кінці файлу: усі функції нижче — звичайні top-level
 // function-декларації, які хостяться повністю, тож посилання на них тут коректні незалежно
 // від порядку виконання; так FM.on гарантовано існує ще до першого можливого виклику fmInit/fmStep.
 window.FM = { on:false, init:fmInit, toggle:fmToggle, event:fmEvent, step:fmStep, duck:fmDuck, unduck:fmUnduck };
@@ -277,7 +277,7 @@ export function fmStep(dt){
     if(typeof state.phase !== 'undefined' && state.phase !== 'play') return;
     const suppressed = fmDucked || (typeof radio !== 'undefined' && radio && radio.on);
     if(suppressed){
-      if(!fmWasSuppressed){ fmWasSuppressed = true; fmStopSpeaking(); } // скасувати ОДИН раз на межі, не щокадру
+      if(!fmWasSuppressed){ fmWasSuppressed = true; fmStopSpeaking(); } // скасувати один раз на межі, не щокадру
       return;
     }
     fmWasSuppressed = false;
