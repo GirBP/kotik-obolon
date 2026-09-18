@@ -1,4 +1,4 @@
-import { CFG, GEARS_M, ENG, torqueCurve } from './core/config.js';
+import { CFG } from './core/config.js';
 import { toXY, fromXY } from './core/geo.js';
 import { toast } from './core/dom.js';
 import { state, input, car, segments, stations, churchMarks, hudCache } from './core/state.js';
@@ -12,6 +12,7 @@ import { setTheme, DAY, NIGHT } from './world/theme.js';
 import { updateHUD, setCtxBtn } from './ui/hud.js';
 import { fmInit, fmEvent, fmStep, fmToggle } from './systems/fm.js';
 import { updateRadio } from './systems/radio.js';
+import { updateDrivetrain, shiftGear, startEngine } from './systems/drivetrain.js';
 import { checkJob } from './systems/jobs.js';
 import { initGame, startGame, startSequence, finishSequence } from './systems/onboarding-sequence.js';
 import './systems/live.js';
@@ -33,56 +34,7 @@ import './systems/multiplayer.js';
 import './systems/postcard.js';
 import './systems/catrig.js';
 
-// ================= КОНФІГ =================
-
-
-
-
-// ===== КПП (реалістична модель, спец) =====
-
-
-
-function updateDrivetrain(dt){
-  const running = car.engineRunning && state.fuel>0;
-  const throttle = (input.gas && running)?1:0;
-  if(car.mode!=='manual'){
-    // АВТОМАТ — аркадна модель, без глохнення
-    const grip=(window.LIVE?window.LIVE.grip:1);   // мокра/слизька дорога → довший гальмівний шлях
-    if(running){ if(input.gas) car.speed+=CFG.accel*dt; else if(input.brake) car.speed-=CFG.brake*grip*dt; else car.speed-=CFG.friction*dt; }
-    else { if(input.brake) car.speed-=CFG.brake*grip*dt; else car.speed-=CFG.friction*dt; }
-    car.speed=Math.max(0,Math.min(CFG.maxSpeed,car.speed)); car.gearDisp='D'; return;
-  }
-  // МЕХАНІКА
-  const comb=GEARS_M[String(car.gear)]||0;
-  const engaged = car.engineRunning ? (car.gear!==0 ? (1-car.clutch) : 0) : 0;
-  const freeTarget = ENG.idle + throttle*(ENG.redline-ENG.idle);
-  const wheelRPM = Math.abs(car.speed)*Math.abs(comb)*ENG.KFAC;
-  const rpmTarget = freeTarget*(1-engaged) + wheelRPM*engaged;
-  car.rpm += (rpmTarget-car.rpm)*(rpmTarget>car.rpm?ENG.revUp:ENG.revDown)*dt;
-  car.rpm = Math.max(0, Math.min(ENG.fuelcut, car.rpm));
-  if(!car.engineRunning) car.rpm=0;
-  let engineForce=0;
-  if(car.engineRunning && engaged>0 && car.gear!==0 && state.fuel>0)
-    engineForce = torqueCurve(car.rpm)*throttle*Math.abs(comb)*ENG.forceK*engaged*Math.sign(comb);
-  const brakeForce=(input.brake?1:0)*ENG.brakeN*(window.LIVE?window.LIVE.grip:1);
-  const drag=ENG.dragA*car.speed*Math.abs(car.speed)+ENG.roll*Math.sign(car.speed);
-  const accel=(engineForce - brakeForce*Math.sign(car.speed) - drag)/ENG.mass;
-  car.speed += accel*dt*3.6;
-  const minS = car.gear===-1? -CFG.maxSpeed*0.4 : 0;
-  car.speed = Math.max(minS, Math.min(CFG.maxSpeed, car.speed));
-  if(car.engineRunning && engaged>0.5 && car.rpm<ENG.stall){ car.stallT=(car.stallT||0)+dt;
-    if(car.stallT>ENG.stallGrace){ car.engineRunning=false; car.rpm=0; car.speed*=0.6; toast('💥 Двигун заглух! Вижми зчеплення і заведи (🔑).'); fmEvent('stall'); } }
-  else car.stallT=0;
-  car.gearDisp = car.gear===-1?'R':(car.gear===0?'N':String(car.gear));
-}
-function shiftGear(delta){
-  if(car.mode!=='manual') return;
-  if(car.clutch<0.7){ toast('Вижми зчеплення, щоб перемкнути передачу'); return; }
-  car.gear=Math.max(-1,Math.min(5, car.gear+delta));
-  toast('Передача: '+(car.gear===-1?'R':car.gear===0?'N':car.gear));
-}
-function startEngine(){ if(!car.engineRunning){ if(car.mode==='manual' && car.clutch<0.7 && car.gear!==0){ toast('Вижми зчеплення, щоб завести'); return; }
-  car.engineRunning=true; car.rpm=ENG.idle; window.SFX&&window.SFX.play('engine_start'); toast('🔑 Двигун заведено'); } }
+// (фізика КПП — чиста частина в core/drivetrain.js, обгортка в systems/drivetrain.js)
 
 // Орієнтири для замовлень (реальні місця Оболоні)
 
