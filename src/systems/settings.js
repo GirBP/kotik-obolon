@@ -1,5 +1,5 @@
 import { state } from '../core/state.js';
-import { stopRadio } from '../main.js';
+import { stopRadio } from './radio.js';
 
 
 
