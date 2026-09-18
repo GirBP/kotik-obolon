@@ -99,7 +99,7 @@ import { car, state } from '../core/state.js';
   // Дворова/службова дорога (svc===1) → 20 км/год; будь-яка інша → 50 км/год.
   // Перф: не викликає nearestRoad() сам (те саме вже рахує step() раз за кадр) —
   // натомість читає кеш window.lastRoadHit, який step() виставляє щокадру.
-  function rawLimitAt(x, y){
+  function rawLimitAt(_x, _y){
     try{
       if(typeof state.roadsOnly !== 'undefined' && !state.roadsOnly) return 50; // вільний режим — завжди «місто»
       var r = (typeof state.lastRoadHit !== 'undefined') ? state.lastRoadHit : null;

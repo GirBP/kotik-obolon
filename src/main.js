@@ -378,7 +378,7 @@ function bindSteer(id,key,dir){
 }
 bindSteer('left','left',-1); bindSteer('right','right',1);
 const steerKeyState={};
-function steerKeyDown(key,dir){
+function steerKeyDown(key,_dir){
   if(steerKeyState[key]) return; steerKeyState[key]={at:performance.now(),held:false,timer:null};
   if(state.roadsOnly && state.phase==='play' && state.curLanes>1)
     steerKeyState[key].timer=setTimeout(()=>{ steerKeyState[key].held=true; input[key]=true; }, CFG.holdMs);

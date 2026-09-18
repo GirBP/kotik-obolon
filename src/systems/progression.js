@@ -172,7 +172,7 @@ import { updateHUD } from '../ui/hud.js';
   }
 
   // ---- XP і ранги ----
-  function addXP(n, reason){
+  function addXP(n, _reason){
     try{
       if(!inited) init();
       var amt = (typeof n==='number' && isFinite(n)) ? n : 0;
