@@ -12,14 +12,7 @@ import { mp } from './multiplayer.js';
 
 // ============================================================
 // «Сліди сусідів» — теплий соціальний шар (v0.6)
-// Для «Котик за кермом» (Оболонь). Вставляється ІНЛАЙН у той самий
-// класичний <script>, що й основна гра — бачить її глобали й нічого
-// з них не перевизначає:
-//   map (Leaflet), car{x,y,heading,speed,...}, phase ('play' під час їзди),
-//   money (let), fuel (let), toXY/fromXY, dist(aLat,aLng,bLat,bLng),
-//   toast(msg), updateHUD(), ac(), bell(freq,t0,dur,vol),
-//   stations[], mp{nick,...}, MP_BROKERS[], window.mqtt, poiIcon(cls,emoji),
-//   DOM: #actions, #hud
+// ES-модуль (див. імпорти вище); mqtt.js підключений як CDN-глобал (window.mqtt).
 //
 // Інші гравці присутні в районі не машинами, а слідами доброти:
 // кожен слід — окремий retained MQTT-топік kotikobolon/traces/<id>.
